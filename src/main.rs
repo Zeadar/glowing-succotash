@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Local, Timelike};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -6,24 +6,48 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 
-const ADDR: &str = "127.0.0.1";
-const PORT: &str = "7878";
-
 #[derive(Deserialize, Serialize, Debug)]
 struct Settings {
     root_path: String,
+    bind_addr: String,
+    bind_port: String,
 }
 
+struct Response {
+    type_text: String,
+    content: String,
+}
+
+const SETTINGS_PATH: &str = "settings.json";
+
 fn main() {
-    let settings = fs::read_to_string("settings.json").unwrap();
+    let settings = match fs::read_to_string(SETTINGS_PATH) {
+        Ok(settings) => settings,
+        Err(err) => {
+            println!("could open {SETTINGS_PATH}");
+            panic!("{err}");
+        }
+    };
     let settings: Settings = serde_json::from_str(settings.as_str()).unwrap();
-    let listener = TcpListener::bind(format!("{ADDR}:{PORT}")).unwrap();
-    let start_time = Utc::now();
+    let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
+    println!("{addr}");
+    let listener: TcpListener = match TcpListener::bind(&addr) {
+        Ok(listener) => listener,
+        Err(err) => {
+            println!("Could not bind on address {}", addr);
+            panic!("{err}");
+        }
+    };
     for stream in listener.incoming() {
         let stream = stream.unwrap();
 
-        let now = Utc::now() - start_time;
-        println!("{}\t : Connection established!", now.num_seconds());
+        let now = Local::now();
+        println!(
+            "{}:{}:{} : Connection established!",
+            now.hour(),
+            now.minute(),
+            now.second()
+        );
         handle_connection(stream, &settings);
         println!()
     }
@@ -39,27 +63,83 @@ fn handle_connection(mut stream: TcpStream, settings: &Settings) {
 
     println!("Request: {http_request:#?}");
 
+    if http_request.is_empty() {
+        println!("Empty request!");
+        return;
+    }
+
     let request_line: Vec<&str> = http_request[0].split(" ").collect();
+    let accept: Vec<&String> = http_request
+        .iter()
+        .filter(|s| s.contains("Accept:"))
+        .collect();
+
+    let accept_text = match accept.first() {
+        Some(s) => s.contains("text"),
+        _ => {
+            println!("No Accept line in Request");
+            return;
+        }
+    };
 
     let request_type = request_line[0];
-    let request_path = request_line[1];
+    let request_path = match request_line[1] {
+        "/" => "/index.html",
+        path => path,
+    };
     let request_version = request_line[2];
-
-    // let accept_line = http_request
 
     println!(
         "type {}, path {}, version {}",
         request_type, request_path, request_version
     );
 
-    let status_line = "HTTP/1.1 200 OK";
-    let content = match request_path {
-        "/" => fs::read_to_string(format!("{}/index.html", settings.root_path)).unwrap(),
-        _ => fs::read_to_string(format!("{}{}", settings.root_path, request_path)).unwrap(),
-    };
+    if request_type != "GET" {
+        println!("Request type {} not understood", request_type);
+        return;
+    }
 
-    let content_len = content.len();
+    if accept_text {
+        let response: Response =
+            match fs::read_to_string(format!("{}/{request_path}", settings.root_path)) {
+                Ok(content) => Response {
+                    type_text: String::from("200 OK"),
+                    content,
+                },
+                Err(err) => {
+                    println!("{err}");
+                    Response {
+                        type_text: String::from("404 NOT FOUND"),
+                        content: fs::read_to_string("404.html").unwrap(),
+                    }
+                }
+            };
 
-    let response = format!("{status_line}\r\nContent-length: {content_len}\r\n\r\n{content}");
-    stream.write_all(response.as_bytes()).unwrap();
+        let status_line = format!("HTTP/1.1 {}", response.type_text);
+        let content_len = response.content.len();
+        let response = format!(
+            "{status_line}\r\nContent-length: {content_len}\r\n\r\n{}",
+            response.content
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    } else {
+        let file_data = match fs::read(format!("{}/{request_path}", settings.root_path)) {
+            Ok(data) => data,
+            Err(err) => {
+                println!("{err}");
+                let content404 = fs::read_to_string("404.html").unwrap();
+                let content404_len = content404.len();
+                let response = format!(
+                    "HTTP/1.1 404 NOT FOUND\r\nContent-length: {content404_len}\r\n\r\n{}",
+                    content404_len
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                return;
+            }
+        };
+
+        let header = format!("http/1.1 200 OK\r\nContent-Type: image/jpeg\r\n",);
+        stream.write_all(header.as_bytes()).unwrap();
+        stream.write_all(file_data.as_slice()).unwrap();
+    }
 }
