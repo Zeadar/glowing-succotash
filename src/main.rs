@@ -1,4 +1,5 @@
 use chrono::{Local, Timelike};
+use mime_guess;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -123,22 +124,28 @@ fn handle_connection(mut stream: TcpStream, settings: &Settings) {
         );
         stream.write_all(response.as_bytes()).unwrap();
     } else {
-        let file_data = match fs::read(format!("{}/{request_path}", settings.root_path)) {
+        let path = format!("{}{request_path}", settings.root_path);
+        let file_data = match fs::read(&path) {
             Ok(data) => data,
             Err(err) => {
                 println!("{err}");
                 let content404 = fs::read_to_string("404.html").unwrap();
                 let content404_len = content404.len();
-                let response = format!(
-                    "HTTP/1.1 404 NOT FOUND\r\nContent-length: {content404_len}\r\n\r\n{}",
-                    content404_len
-                );
+                let response = format!("HTTP/1.1 404 NOT FOUND\r\ncontent-length: {content404_len}\r\n\r\n{content404}");
                 stream.write_all(response.as_bytes()).unwrap();
                 return;
             }
         };
 
-        let header = format!("http/1.1 200 OK\r\nContent-Type: image/jpeg\r\n",);
+        let mime = mime_guess::from_path(&path)
+            .first_or_octet_stream()
+            .to_string();
+        println!("Guessed {mime} from {path}");
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
+            mime,
+            file_data.len()
+        );
         stream.write_all(header.as_bytes()).unwrap();
         stream.write_all(file_data.as_slice()).unwrap();
     }
