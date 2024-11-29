@@ -113,6 +113,7 @@ fn handle_connection(mut stream: TcpStream, settings: &Settings) {
         mime,
         file_data.len()
     );
+    println!("Sent with header:\n{header}");
     match stream.write_all(header.as_bytes()) {
         Err(err) => {
             println!("Could not write header to stream");
