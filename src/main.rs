@@ -39,7 +39,7 @@ fn main() {
 
         let now = Local::now();
         println!(
-            "{}:{}:{} : Connection established!",
+            "{:02}:{:02}:{:02} : Connection established!",
             now.hour(),
             now.minute(),
             now.second()
@@ -83,8 +83,8 @@ fn handle_connection(mut stream: TcpStream, settings: &Settings) {
         return;
     }
 
-    let path = format!("{}{request_path}", settings.root_path);
-    let file_data = match fs::read(&path) {
+    let file_path = format!("{}{request_path}", settings.root_path);
+    let file_data = match fs::read(&file_path) {
         Ok(data) => data,
         Err(err) => {
             println!("{err}");
@@ -93,22 +93,40 @@ fn handle_connection(mut stream: TcpStream, settings: &Settings) {
             let response = format!(
                 "HTTP/1.1 404 NOT FOUND\r\ncontent-length: {content404_len}\r\n\r\n{content404}"
             );
-            stream.write_all(response.as_bytes()).unwrap();
+            match stream.write_all(response.as_bytes()) {
+                Err(err) => {
+                    println!("Could not write 404 message to stream");
+                    println!("{err}");
+                }
+                _ => {}
+            }
             return;
         }
     };
 
-    let mime = mime_guess::from_path(&path)
+    let mime = mime_guess::from_path(&request_path)
         .first_or_octet_stream()
         .to_string();
-    println!("Guessed {mime} from {path}");
+    println!("Guessed {mime} from {request_path}");
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
         mime,
         file_data.len()
     );
-    stream.write_all(header.as_bytes()).unwrap();
-    stream.write_all(file_data.as_slice()).unwrap();
+    match stream.write_all(header.as_bytes()) {
+        Err(err) => {
+            println!("Could not write header to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
+    match stream.write_all(file_data.as_slice()) {
+        Err(err) => {
+            println!("Could not write content to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
 }
 
 fn content_404(message: String) -> String {
