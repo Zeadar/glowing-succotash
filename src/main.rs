@@ -5,6 +5,8 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
+    thread,
+    time::Duration,
 };
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -35,6 +37,8 @@ fn main() {
         }
     };
     for stream in listener.incoming() {
+        //simulating slow connection
+        thread::sleep(Duration::from_secs(3));
         let stream = stream.unwrap();
 
         let now = Local::now();
