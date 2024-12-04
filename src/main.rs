@@ -9,11 +9,12 @@ use std::{
     time::Duration,
 };
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 struct Settings {
     root_path: String,
     bind_addr: String,
     bind_port: String,
+    n_threads: u32,
 }
 
 const SETTINGS_PATH: &str = "settings.json";
@@ -22,11 +23,18 @@ fn main() {
     let settings = match fs::read_to_string(SETTINGS_PATH) {
         Ok(settings) => settings,
         Err(err) => {
-            println!("could open {SETTINGS_PATH}");
+            println!("Could not open {SETTINGS_PATH}");
             panic!("{err}");
         }
     };
-    let settings: Settings = serde_json::from_str(settings.as_str()).unwrap();
+    let settings: Settings = match serde_json::from_str(settings.as_str()) {
+        Ok(settings) => settings,
+        Err(err) => {
+            println!("Error reading {SETTINGS_PATH}");
+            println!("{err}");
+            return;
+        }
+    };
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
     let listener: TcpListener = match TcpListener::bind(&addr) {
@@ -38,22 +46,25 @@ fn main() {
     };
     for stream in listener.incoming() {
         //simulating slow connection
-        thread::sleep(Duration::from_secs(3));
         let stream = stream.unwrap();
+        let settings = settings.clone();
 
-        let now = Local::now();
-        println!(
-            "{:02}:{:02}:{:02} : Connection established!",
-            now.hour(),
-            now.minute(),
-            now.second()
-        );
-        handle_connection(stream, &settings);
-        println!()
+        thread::spawn(|| {
+            thread::sleep(Duration::from_secs(3));
+            let now = Local::now();
+            println!(
+                "{:02}:{:02}:{:02} : Connection established!",
+                now.hour(),
+                now.minute(),
+                now.second()
+            );
+            handle_connection(stream, settings);
+            println!()
+        });
     }
 }
 
-fn handle_connection(mut stream: TcpStream, settings: &Settings) {
+fn handle_connection(mut stream: TcpStream, settings: Settings) {
     let buf_reader = BufReader::new(&mut stream);
     let http_request: Vec<_> = buf_reader
         .lines()
