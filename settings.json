@@ -2,5 +2,5 @@
 	"root_path": "public",
 	"bind_addr": "127.0.0.1",
 	"bind_port": "7878",
-	"n_threads": 4
+	"n_threads": 2
 }

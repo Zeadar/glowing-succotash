@@ -8,13 +8,14 @@ use std::{
     thread,
     time::Duration,
 };
+use webber::ThreadPool;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 struct Settings {
     root_path: String,
     bind_addr: String,
     bind_port: String,
-    n_threads: u32,
+    n_threads: usize,
 }
 
 const SETTINGS_PATH: &str = "settings.json";
@@ -45,11 +46,12 @@ fn main() {
         }
     };
     for stream in listener.incoming() {
-        //simulating slow connection
         let stream = stream.unwrap();
         let settings = settings.clone();
+        let pool = ThreadPool::new(settings.n_threads);
 
-        thread::spawn(|| {
+        pool.execute(|| {
+            //simulating slow connection
             thread::sleep(Duration::from_secs(3));
             let now = Local::now();
             println!(
