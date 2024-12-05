@@ -1,4 +1,4 @@
-use chrono::{Local, Timelike};
+// use chrono::{Local, Timelike};
 use mime_guess;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,6 +38,8 @@ fn main() {
     };
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
+
+    let pool = ThreadPool::new(settings.n_threads);
     let listener: TcpListener = match TcpListener::bind(&addr) {
         Ok(listener) => listener,
         Err(err) => {
@@ -48,20 +50,19 @@ fn main() {
     for stream in listener.incoming() {
         let stream = stream.unwrap();
         let settings = settings.clone();
-        let pool = ThreadPool::new(settings.n_threads);
 
         pool.execute(|| {
             //simulating slow connection
-            thread::sleep(Duration::from_secs(3));
-            let now = Local::now();
-            println!(
-                "{:02}:{:02}:{:02} : Connection established!",
-                now.hour(),
-                now.minute(),
-                now.second()
-            );
+            thread::sleep(Duration::from_secs(1));
+            // let now = Local::now();
+            // println!(
+            //     "{:02}:{:02}:{:02} : Connection established!",
+            //     now.hour(),
+            //     now.minute(),
+            //     now.second()
+            // );
             handle_connection(stream, settings);
-            println!()
+            // println!()
         });
     }
 }
@@ -74,7 +75,7 @@ fn handle_connection(mut stream: TcpStream, settings: Settings) {
         .take_while(|line| !line.is_empty())
         .collect();
 
-    println!("Request: {http_request:#?}");
+    // println!("Request: {http_request:#?}");
 
     if http_request.is_empty() {
         println!("Empty request!");
@@ -88,12 +89,12 @@ fn handle_connection(mut stream: TcpStream, settings: Settings) {
         "/" => "/index.html",
         path => path,
     };
-    let request_version = request_line[2];
+    // let request_version = request_line[2];
 
-    println!(
-        "type {}, path {}, version {}",
-        request_type, request_path, request_version
-    );
+    // println!(
+    //     "type {}, path {}, version {}",
+    //     request_type, request_path, request_version
+    // );
 
     if request_type != "GET" {
         println!("Request type {} not understood", request_type);
@@ -124,13 +125,13 @@ fn handle_connection(mut stream: TcpStream, settings: Settings) {
     let mime = mime_guess::from_path(&request_path)
         .first_or_octet_stream()
         .to_string();
-    println!("Guessed {mime} from {request_path}");
+    // println!("Guessed {mime} from {request_path}");
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
         mime,
         file_data.len()
     );
-    println!("Sent with header:\n{header}");
+    // println!("Sent with header:\n{header}");
     match stream.write_all(header.as_bytes()) {
         Err(err) => {
             println!("Could not write header to stream");
