@@ -5,12 +5,13 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
+    sync::Arc,
     thread,
     time::Duration,
 };
 use webber::ThreadPool;
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug)]
 struct Settings {
     root_path: String,
     bind_addr: String,
@@ -24,18 +25,18 @@ fn main() {
     let settings = match fs::read_to_string(SETTINGS_PATH) {
         Ok(settings) => settings,
         Err(err) => {
-            println!("Could not open {SETTINGS_PATH}");
+            println!("Error reading {SETTINGS_PATH}");
             panic!("{err}");
         }
     };
     let settings: Settings = match serde_json::from_str(settings.as_str()) {
         Ok(settings) => settings,
         Err(err) => {
-            println!("Error reading {SETTINGS_PATH}");
-            println!("{err}");
-            return;
+            println!("Error parsing {SETTINGS_PATH}");
+            panic!("{err}");
         }
     };
+    let settings = Arc::new(settings);
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
@@ -67,7 +68,7 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, settings: Settings) {
+fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
     let buf_reader = BufReader::new(&mut stream);
     let http_request: Vec<_> = buf_reader
         .lines()
