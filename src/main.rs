@@ -6,8 +6,8 @@ use std::{
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
     sync::Arc,
-    thread,
-    time::Duration,
+    // thread,
+    // time::Duration,
 };
 use webber::ThreadPool;
 
@@ -54,7 +54,7 @@ fn main() {
 
         pool.execute(|| {
             //simulating slow connection
-            thread::sleep(Duration::from_secs(1));
+            // thread::sleep(Duration::from_secs(1));
             // let now = Local::now();
             // println!(
             //     "{:02}:{:02}:{:02} : Connection established!",
@@ -65,6 +65,8 @@ fn main() {
             handle_connection(stream, settings);
             // println!()
         });
+
+        println!("Shutting down...");
     }
 }
 
