@@ -1,27 +1,23 @@
-// use chrono::{Local, Timelike};
+use data_structs::{Settings, Task};
 use mime_guess;
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
     sync::Arc,
-    // thread,
-    // time::Duration,
 };
 use webber::ThreadPool;
 
-#[derive(Deserialize, Serialize, Debug)]
-struct Settings {
-    root_path: String,
-    bind_addr: String,
-    bind_port: String,
-    n_threads: usize,
-}
+mod data_structs;
 
 const SETTINGS_PATH: &str = "settings.json";
 
 fn main() {
+    let test_task = fs::read_to_string("testtask.json").unwrap();
+    println!("{test_task}");
+    let test_task: Task = serde_json::from_str(test_task.as_str()).unwrap();
+    println!("{:?}", test_task);
+
     let settings = match fs::read_to_string(SETTINGS_PATH) {
         Ok(settings) => settings,
         Err(err) => {
@@ -36,6 +32,7 @@ fn main() {
             panic!("{err}");
         }
     };
+
     let settings = Arc::new(settings);
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
@@ -53,17 +50,7 @@ fn main() {
         let settings = settings.clone();
 
         pool.execute(|| {
-            //simulating slow connection
-            // thread::sleep(Duration::from_secs(1));
-            // let now = Local::now();
-            // println!(
-            //     "{:02}:{:02}:{:02} : Connection established!",
-            //     now.hour(),
-            //     now.minute(),
-            //     now.second()
-            // );
             handle_connection(stream, settings);
-            // println!()
         });
 
         println!("Shutting down...");
@@ -78,8 +65,6 @@ fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
         .take_while(|line| !line.is_empty())
         .collect();
 
-    // println!("Request: {http_request:#?}");
-
     if http_request.is_empty() {
         println!("Empty request!");
         return;
@@ -92,12 +77,6 @@ fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
         "/" => "/index.html",
         path => path,
     };
-    // let request_version = request_line[2];
-
-    // println!(
-    //     "type {}, path {}, version {}",
-    //     request_type, request_path, request_version
-    // );
 
     if request_type != "GET" {
         println!("Request type {} not understood", request_type);
@@ -128,13 +107,12 @@ fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
     let mime = mime_guess::from_path(&request_path)
         .first_or_octet_stream()
         .to_string();
-    // println!("Guessed {mime} from {request_path}");
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
         mime,
         file_data.len()
     );
-    // println!("Sent with header:\n{header}");
+
     match stream.write_all(header.as_bytes()) {
         Err(err) => {
             println!("Could not write header to stream");

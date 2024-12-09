@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-chrono = "0.4.38"
+chrono = {version = "0.4.38", features = ["serde"]}
 mime_guess = "2.0.5"
 rusqlite = {version = "0.32.1", features = ["bundled", "serde_json", "chrono"]}
 serde = {version = "1.0.215", features = ["derive"] }
