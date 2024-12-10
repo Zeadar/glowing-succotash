@@ -28,3 +28,6 @@ public/*
 !public/index.html
 !public/index.css
 !public/favicon.ico
+
+# no database on github
+*.db
