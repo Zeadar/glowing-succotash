@@ -1,5 +1,6 @@
-use data_structs::{Settings, Task};
+use data_structs::{Settings, Sql, Task};
 use mime_guess;
+use rusqlite::Connection;
 use std::{
     fs,
     io::{prelude::*, BufReader},
@@ -13,11 +14,6 @@ mod data_structs;
 const SETTINGS_PATH: &str = "settings.json";
 
 fn main() {
-    let test_task = fs::read_to_string("testtask.json").unwrap();
-    println!("{test_task}");
-    let test_task: Task = serde_json::from_str(test_task.as_str()).unwrap();
-    println!("{:?}", test_task);
-
     let settings = match fs::read_to_string(SETTINGS_PATH) {
         Ok(settings) => settings,
         Err(err) => {
@@ -34,6 +30,31 @@ fn main() {
     };
 
     let settings = Arc::new(settings);
+
+    //SQL EXPERIMENT
+    let test_task = fs::read_to_string("testtask.json").unwrap();
+    // println!("{test_task}");
+    let test_task: Task = serde_json::from_str(test_task.as_str()).unwrap();
+    println!("{}", test_task.to_sql());
+    let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
+    let insert_result = sql_connection
+        .execute(test_task.to_sql().as_str(), ())
+        .unwrap();
+
+    let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
+    let task_iter = stmt
+        .query_map([], |row| {
+            rusqlite::Result::Ok({
+                //TODO implement from_sql_row
+                // let hi = row.get_unwrap(0);
+            })
+        })
+        .unwrap();
+
+    println!("Insert result {insert_result}");
+
+    //EXPERIMENT END
+
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
