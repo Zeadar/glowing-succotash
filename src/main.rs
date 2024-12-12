@@ -28,30 +28,31 @@ fn main() {
             panic!("{err}");
         }
     };
-
     let settings = Arc::new(settings);
 
     //SQL EXPERIMENT
-    let test_task = fs::read_to_string("testtask.json").unwrap();
-    // println!("{test_task}");
-    let test_task: Task = serde_json::from_str(test_task.as_str()).unwrap();
-    println!("{}", test_task.to_sql());
+    // let test_task = fs::read_to_string("testtask.json").unwrap();
+    // let test_task = Task::from_json(test_task.as_str()).unwrap();
+    // println!("{:?}\n{}", test_task, test_task.to_json());
     let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
-    let insert_result = sql_connection
-        .execute(test_task.to_sql().as_str(), ())
-        .unwrap();
+    // let insert_result = sql_connection
+    //     .execute(test_task.to_sql_insert().as_str(), ())
+    //     .unwrap();
 
     let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
-    let task_iter = stmt
-        .query_map([], |row| {
-            rusqlite::Result::Ok({
-                //TODO implement from_sql_row
-                // let hi = row.get_unwrap(0);
-            })
-        })
-        .unwrap();
+    let results: Vec<String> = stmt
+        .query_map([], |row| Task::from_sql_row(row))
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .map(|t| t.to_json())
+        .collect();
 
-    println!("Insert result {insert_result}");
+    for s in results {
+        println!("{s}");
+    }
+
+    // println!("Insert result {insert_result}");
 
     //EXPERIMENT END
 
@@ -72,9 +73,8 @@ fn main() {
 
         pool.execute(|| {
             handle_connection(stream, settings);
+            println!("Shutting down...");
         });
-
-        println!("Shutting down...");
     }
 }
 
