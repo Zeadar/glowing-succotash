@@ -39,6 +39,7 @@ fn main() {
     // let insert_result = sql_connection
     //     .execute(test_task.to_sql_insert().as_str(), ())
     //     .unwrap();
+    // println!("insert result {insert_result}");
 
     let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
     let results: Vec<String> = stmt
@@ -86,7 +87,10 @@ fn main() {
             }
 
             let request_line: Vec<&str> = http_request[0].split(" ").collect();
-            println!("http header parameters: {}", request_line.len());
+            if request_line.len() != 3 {
+                println!("invalid header\n{}", http_request[0]);
+                return;
+            }
 
             let request_type = request_line[0];
             let request_path = match request_line[1] {
