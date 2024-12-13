@@ -7,9 +7,10 @@ use std::{
     net::{TcpListener, TcpStream},
     sync::Arc,
 };
-use webber::ThreadPool;
+use threadspool::ThreadSpool;
 
 mod data_structs;
+mod threadspool;
 
 const SETTINGS_PATH: &str = "settings.json";
 
@@ -59,7 +60,7 @@ fn main() {
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
-    let pool = ThreadPool::new(settings.n_threads);
+    let pool = ThreadSpool::new(settings.n_threads);
     let listener: TcpListener = match TcpListener::bind(&addr) {
         Ok(listener) => listener,
         Err(err) => {

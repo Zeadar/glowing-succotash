@@ -1,17 +1,17 @@
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-pub struct ThreadPool {
+pub struct ThreadSpool {
     workers: Vec<Worker>,
     sender: Option<mpsc::Sender<Job>>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-impl ThreadPool {
+impl ThreadSpool {
     ///Size is number of threads in pool.
     ///Will panic if size == 0.
-    pub fn new(size: usize) -> ThreadPool {
+    pub fn new(size: usize) -> ThreadSpool {
         assert!(size != 0);
 
         let (sender, reciever) = mpsc::channel();
@@ -22,7 +22,7 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&reciever)));
         }
 
-        ThreadPool {
+        ThreadSpool {
             workers,
             sender: Some(sender),
         }
@@ -37,7 +37,7 @@ impl ThreadPool {
     }
 }
 
-impl Drop for ThreadPool {
+impl Drop for ThreadSpool {
     fn drop(&mut self) {
         for worker in &mut self.workers {
             drop(self.sender.take());
