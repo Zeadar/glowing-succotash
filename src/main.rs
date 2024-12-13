@@ -69,59 +69,52 @@ fn main() {
         }
     };
     for stream in listener.incoming() {
-        let stream = stream.unwrap();
+        let mut stream = stream.unwrap();
         let settings = settings.clone();
 
         pool.execute(|| {
-            handle_connection(stream, settings);
+            let buf_reader = BufReader::new(&mut stream);
+            let http_request: Vec<_> = buf_reader
+                .lines()
+                .map(|result| result.unwrap())
+                .take_while(|line| !line.is_empty())
+                .collect();
+
+            if http_request.is_empty() {
+                println!("Empty request!");
+                return;
+            }
+
+            let request_line: Vec<&str> = http_request[0].split(" ").collect();
+            println!("http header parameters: {}", request_line.len());
+
+            let request_type = request_line[0];
+            let request_path = match request_line[1] {
+                "/" => "/index.html",
+                path => path,
+            };
+
+            match request_type {
+                "GET" => {
+                    handle_get_file(stream, settings, request_path);
+                }
+                _ => {
+                    todo!();
+                }
+            }
+
             println!("Shutting down...");
         });
     }
 }
 
-fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
-    let buf_reader = BufReader::new(&mut stream);
-    let http_request: Vec<_> = buf_reader
-        .lines()
-        .map(|result| result.unwrap())
-        .take_while(|line| !line.is_empty())
-        .collect();
-
-    if http_request.is_empty() {
-        println!("Empty request!");
-        return;
-    }
-
-    let request_line: Vec<&str> = http_request[0].split(" ").collect();
-
-    let request_type = request_line[0];
-    let request_path = match request_line[1] {
-        "/" => "/index.html",
-        path => path,
-    };
-
-    if request_type != "GET" {
-        println!("Request type {} not understood", request_type);
-        return;
-    }
-
+fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path: &str) {
     let file_path = format!("{}{request_path}", settings.root_path);
     let file_data = match fs::read(&file_path) {
         Ok(data) => data,
         Err(err) => {
+            serve_404(stream, err.to_string());
             println!("{err}");
-            let content404 = content_404(err.to_string());
-            let content404_len = content404.len();
-            let response = format!(
-                "HTTP/1.1 404 NOT FOUND\r\ncontent-length: {content404_len}\r\n\r\n{content404}"
-            );
-            match stream.write_all(response.as_bytes()) {
-                Err(err) => {
-                    println!("Could not write 404 message to stream");
-                    println!("{err}");
-                }
-                _ => {}
-            }
             return;
         }
     };
@@ -151,7 +144,7 @@ fn handle_connection(mut stream: TcpStream, settings: Arc<Settings>) {
     }
 }
 
-fn content_404(message: String) -> String {
+fn serve_404(mut stream: TcpStream, message: String) {
     let first = r#"
 <!DOCTYPE html>
 <html lang="en">
@@ -171,5 +164,16 @@ fn content_404(message: String) -> String {
   </body>
 </html>
     "#;
-    return format!("{first}{message}{second}");
+
+    let content404 = format!("{first}{message}{second}");
+    let content404_len = content404.len();
+    let response =
+        format!("HTTP/1.1 404 NOT FOUND\r\ncontent-length: {content404_len}\r\n\r\n{content404}");
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 404 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
 }
