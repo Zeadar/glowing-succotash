@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use rusqlite;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use uuid::Uuid;
 
 pub trait Sql {
     type Me;
@@ -23,7 +24,7 @@ pub struct Settings {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Task {
-    id: Option<u64>,
+    id: Option<String>,
     assign_date: NaiveDate,
     due_date: NaiveDate,
     title: String,
@@ -34,8 +35,8 @@ impl Sql for Task {
     type Me = Self;
 
     fn to_sql_insert(&self) -> String {
-        format!("INSERT INTO tasks (assign_date, due_date, title, description) VALUES ('{}', '{}', '{}', '{}');",
-            self.assign_date, self.due_date, self.title, self.description)
+        format!("INSERT INTO tasks (id, assign_date, due_date, title, description) VALUES ('{}', '{}', '{}', '{}', '{}');",
+            Uuid::now_v7(), self.assign_date, self.due_date, self.title, self.description)
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Self::Me, rusqlite::Error> {

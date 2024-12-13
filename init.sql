@@ -1,5 +1,5 @@
 CREATE TABLE tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     due_date TEXT NOT NULL,
     assign_date TEXT NOT NULL,
     title TEXT NOT NULL,
