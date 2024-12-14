@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use threadspool::ThreadSpool;
 
@@ -36,23 +36,24 @@ fn main() {
     // let test_task = Task::from_json(test_task.as_str()).unwrap();
     // println!("{:?}\n{}", test_task, test_task.to_json());
     let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
+    let sql_connection = Arc::new(Mutex::new(sql_connection));
     // let insert_result = sql_connection
     //     .execute(test_task.to_sql_insert().as_str(), ())
     //     .unwrap();
     // println!("insert result {insert_result}");
 
-    let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
-    let results: Vec<String> = stmt
-        .query_map([], |row| Task::from_sql_row(row))
-        .unwrap()
-        .into_iter()
-        .filter_map(|r| r.ok())
-        .map(|t| t.to_json())
-        .collect();
+    // let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
+    // let results: Vec<String> = stmt
+    //     .query_map([], |row| Task::from_sql_row(row))
+    //     .unwrap()
+    //     .into_iter()
+    //     .filter_map(|r| r.ok())
+    //     .map(|t| t.to_json())
+    //     .collect();
 
-    for s in results {
-        println!("{s}");
-    }
+    // for s in results {
+    //     println!("{s}");
+    // }
 
     // println!("Insert result {insert_result}");
 
@@ -72,6 +73,7 @@ fn main() {
     for stream in listener.incoming() {
         let mut stream = stream.unwrap();
         let settings = settings.clone();
+        let sql_connection = sql_connection.clone();
 
         pool.execute(|| {
             let buf_reader = BufReader::new(&mut stream);
@@ -100,15 +102,53 @@ fn main() {
 
             match request_type {
                 "GET" => {
-                    handle_get_file(stream, settings, request_path);
+                    if request_path.contains("/api/") {
+                        handle_get_api(stream, sql_connection, request_path);
+                    } else {
+                        handle_get_file(stream, settings, request_path);
+                    }
                 }
                 _ => {
-                    todo!();
+                    serve_404_html(stream, format!("Unrecognized request type {request_type}"));
+                    return;
                 }
             }
-
-            println!("Shutting down...");
         });
+    }
+}
+
+fn handle_post_api(
+    mut stream: TcpStream,
+    sql_connection: Arc<Mutex<Connection>>,
+    request_path: &str,
+) {
+    todo!();
+}
+
+fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
+    match request_path {
+        "/api/tasks" => {
+            let body: String;
+
+            {
+                let conn = sql_connection.lock().unwrap();
+                let mut stmt = conn.prepare("SELECT * FROM tasks").unwrap();
+                let results: Vec<String> = stmt
+                    .query_map([], |row| Task::from_sql_row(row))
+                    .unwrap()
+                    .into_iter()
+                    .filter_map(|r| r.ok())
+                    .map(|t| t.to_json())
+                    .collect();
+
+                body = results.join(",")
+            }
+
+            serve_json(stream, format!("[{body}]"));
+        }
+        _ => {
+            serve_404_html(stream, format!("Invalid api: {request_path}"));
+        }
     }
 }
 
@@ -117,8 +157,7 @@ fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path:
     let file_data = match fs::read(&file_path) {
         Ok(data) => data,
         Err(err) => {
-            serve_404(stream, err.to_string());
-            println!("{err}");
+            serve_404_html(stream, err.to_string());
             return;
         }
     };
@@ -148,7 +187,33 @@ fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path:
     }
 }
 
-fn serve_404(mut stream: TcpStream, message: String) {
+fn serve_json(mut stream: TcpStream, body: String) {
+    let body = body.as_bytes();
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    match stream.write_all(header.as_bytes()) {
+        Err(err) => {
+            println!("Could not write header to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
+    match stream.write_all(body) {
+        Err(err) => {
+            println!("Could not write header to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
+}
+
+fn serve_404_json(mut stream: TcpStream, message: String) {
+    todo!();
+}
+
+fn serve_404_html(mut stream: TcpStream, message: String) {
     let first = r#"
 <!DOCTYPE html>
 <html lang="en">
