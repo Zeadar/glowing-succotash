@@ -31,33 +31,8 @@ fn main() {
     };
     let settings = Arc::new(settings);
 
-    //SQL EXPERIMENT
-    // let test_task = fs::read_to_string("testtask.json").unwrap();
-    // let test_task = Task::from_json(test_task.as_str()).unwrap();
-    // println!("{:?}\n{}", test_task, test_task.to_json());
     let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
     let sql_connection = Arc::new(Mutex::new(sql_connection));
-    // let insert_result = sql_connection
-    //     .execute(test_task.to_sql_insert().as_str(), ())
-    //     .unwrap();
-    // println!("insert result {insert_result}");
-
-    // let mut stmt = sql_connection.prepare("SELECT * FROM tasks").unwrap();
-    // let results: Vec<String> = stmt
-    //     .query_map([], |row| Task::from_sql_row(row))
-    //     .unwrap()
-    //     .into_iter()
-    //     .filter_map(|r| r.ok())
-    //     .map(|t| t.to_json())
-    //     .collect();
-
-    // for s in results {
-    //     println!("{s}");
-    // }
-
-    // println!("Insert result {insert_result}");
-
-    //EXPERIMENT END
 
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
@@ -108,6 +83,13 @@ fn main() {
                         handle_get_file(stream, settings, request_path);
                     }
                 }
+                "POST" => {
+                    if request_path.contains("/api/") {
+                        handle_post_api(stream, sql_connection, request_path);
+                    } else {
+                        serve_404_json(stream, format!("Invalid api: {request_path}"));
+                    }
+                }
                 _ => {
                     serve_404_html(stream, format!("Unrecognized request type {request_type}"));
                     return;
@@ -122,7 +104,18 @@ fn handle_post_api(
     sql_connection: Arc<Mutex<Connection>>,
     request_path: &str,
 ) {
-    todo!();
+    match request_path {
+        "/api/tasks" => {
+            // let task = Task::from_json()
+            serve_204_nocontent(stream);
+        }
+        _ => {
+            serve_404_json(stream, format!("Invalid api: {request_path}"));
+        }
+    }
+    // let insert_result = sql_connection
+    //     .execute(test_task.to_sql_insert().as_str(), ())
+    //     .unwrap();
 }
 
 fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
@@ -135,7 +128,7 @@ fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, req
                     return;
                 }
             };
-            serve_json(stream, format!("[{}]", json_tasks));
+            serve_json(stream, format!("[{json_tasks}]"));
         }
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
@@ -255,6 +248,17 @@ fn serve_500_json(mut stream: TcpStream, message: String) {
         }
         _ => {}
     };
+}
+
+fn serve_204_nocontent(mut stream: TcpStream) {
+    let header = "HTTP/1.1 204 No Content\r\n";
+    match stream.write_all(header.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 204 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    }
 }
 
 fn serve_404_html(mut stream: TcpStream, message: String) {
