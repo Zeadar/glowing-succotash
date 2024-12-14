@@ -1,5 +1,5 @@
 use data_structs::{Settings, Sql, Task};
-use mime_guess;
+use mime_guess::{self, mime::JSON};
 use rusqlite::Connection;
 use std::{
     fs,
@@ -128,26 +128,17 @@ fn handle_post_api(
 fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
     match request_path {
         "/api/tasks" => {
-            let body: String;
-
-            {
-                let conn = sql_connection.lock().unwrap();
-                let mut stmt = conn.prepare("SELECT * FROM tasks").unwrap();
-                let results: Vec<String> = stmt
-                    .query_map([], |row| Task::from_sql_row(row))
-                    .unwrap()
-                    .into_iter()
-                    .filter_map(|r| r.ok())
-                    .map(|t| t.to_json())
-                    .collect();
-
-                body = results.join(",")
-            }
-
-            serve_json(stream, format!("[{body}]"));
+            let json_tasks = match query_to_json(sql_connection, "SELECT * FROM tasks") {
+                Ok(strings) => strings.join(","),
+                Err(err) => {
+                    serve_500_json(stream, err.to_string());
+                    return;
+                }
+            };
+            serve_json(stream, format!("[{}]", json_tasks));
         }
         _ => {
-            serve_404_html(stream, format!("Invalid api: {request_path}"));
+            serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
     }
 }
@@ -209,8 +200,61 @@ fn serve_json(mut stream: TcpStream, body: String) {
     }
 }
 
+fn query_to_json(
+    sql_connection: Arc<Mutex<Connection>>,
+    sql_query: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut results = Vec::new();
+
+    {
+        let conn = sql_connection.lock().unwrap();
+        let mut statement = conn.prepare(sql_query)?;
+        //Would totally love to drop the connection mutex before any data conversions,
+        //however, the data from 'query()' does not live long enough rip
+        let query = statement.query_map([], |row| Task::from_sql_row(row))?;
+
+        results.extend(query);
+    }
+
+    let json: Vec<String> = results
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .map(|task| task.to_json())
+        .collect();
+
+    Ok(json)
+}
+
 fn serve_404_json(mut stream: TcpStream, message: String) {
-    todo!();
+    let message = format!("{{\"error\":{{\"code\":404,\"message\":\"404 Resource not found\",\"internalMessage\":\"{message}\"}}}}");
+    let response = format!(
+        "HTTP/1.1 404 Resource Not Found\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 404 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
+}
+
+fn serve_500_json(mut stream: TcpStream, message: String) {
+    let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
+    let response = format!(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 500 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
 }
 
 fn serve_404_html(mut stream: TcpStream, message: String) {
