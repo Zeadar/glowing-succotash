@@ -1,5 +1,5 @@
 use data_structs::{Settings, Sql, Task};
-use mime_guess::{self, mime::JSON};
+use mime_guess;
 use rusqlite::Connection;
 use std::{
     fs,
@@ -52,7 +52,7 @@ fn main() {
 
         pool.execute(|| {
             let buf_reader = BufReader::new(&mut stream);
-            let http_request: Vec<_> = buf_reader
+            let http_request: Vec<String> = buf_reader
                 .lines()
                 .map(|result| result.unwrap())
                 .take_while(|line| !line.is_empty())
