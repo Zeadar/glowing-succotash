@@ -1,9 +1,11 @@
 use data_structs::{Settings, Sql, Task};
 use mime_guess;
 use rusqlite::Connection;
+use serde::de::IntoDeserializer;
 use std::{
     fs,
     io::{prelude::*, BufReader},
+    mem::take,
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
 };
@@ -51,12 +53,31 @@ fn main() {
         let sql_connection = sql_connection.clone();
 
         pool.execute(|| {
-            let buf_reader = BufReader::new(&mut stream);
-            let http_request: Vec<String> = buf_reader
-                .lines()
-                .map(|result| result.unwrap())
-                .take_while(|line| !line.is_empty())
-                .collect();
+            //lets have a limit of 10 mibibytes as for now
+            let mut buf_reader = BufReader::new(&mut stream).take(10240);
+            // let http_request: Vec<String> = buf_reader
+            //     .lines()
+            //     .map(|result| result.unwrap())
+            //     .take_while(|line| !line.is_empty())
+            //     .collect();
+
+            let mut http_request: Vec<String> = Vec::new();
+            let mut buffer = String::new();
+
+            loop {
+                match buf_reader.read_line(&mut buffer) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!("Error reading: {err}");
+                    }
+                }
+                let trim_line = buffer.trim();
+                if trim_line.is_empty() {
+                    break;
+                }
+                http_request.push(trim_line.to_string());
+                buffer.clear();
+            }
 
             if http_request.is_empty() {
                 println!("Empty request!");
@@ -85,6 +106,23 @@ fn main() {
                 }
                 "POST" => {
                     if request_path.contains("/api/") {
+                        let content_length: u64 = http_request
+                            .iter()
+                            .find(|line| line.to_lowercase().contains("content-length"))
+                            .and_then(|line| line.split(":").nth(1))
+                            .and_then(|length| length.trim().parse().ok())
+                            .unwrap_or(0);
+
+                        if content_length > 0 {
+                            let mut body = String::with_capacity(content_length as usize);
+                            buf_reader
+                                .take(content_length)
+                                .read_to_string(&mut body)
+                                .unwrap();
+
+                            println!("{body}");
+                        }
+
                         handle_post_api(stream, sql_connection, request_path);
                     } else {
                         serve_404_json(stream, format!("Invalid api: {request_path}"));
