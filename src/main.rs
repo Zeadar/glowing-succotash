@@ -1,11 +1,9 @@
 use data_structs::{Settings, Sql, Task};
 use mime_guess;
 use rusqlite::Connection;
-use serde::de::IntoDeserializer;
 use std::{
     fs,
     io::{prelude::*, BufReader},
-    mem::take,
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
 };
@@ -53,22 +51,19 @@ fn main() {
         let sql_connection = sql_connection.clone();
 
         pool.execute(|| {
-            //lets have a limit of 10 mibibytes as for now
-            let mut buf_reader = BufReader::new(&mut stream).take(10240);
-            // let http_request: Vec<String> = buf_reader
-            //     .lines()
-            //     .map(|result| result.unwrap())
-            //     .take_while(|line| !line.is_empty())
-            //     .collect();
+            //lets have a limit of one mibibyte as for now
+            let mut buf_reader = BufReader::new(&mut stream).take(1048576);
 
             let mut http_request: Vec<String> = Vec::new();
             let mut buffer = String::new();
 
+            //Used to make iterator with lines() but that took ownership
+            //over the reader which made it impossible to extract the body
             loop {
                 match buf_reader.read_line(&mut buffer) {
                     Ok(_) => {}
                     Err(err) => {
-                        println!("Error reading: {err}");
+                        println!("{err}");
                     }
                 }
                 let trim_line = buffer.trim();
@@ -98,32 +93,30 @@ fn main() {
 
             match request_type {
                 "GET" => {
-                    if request_path.contains("/api/") {
+                    if request_path.starts_with("/api/") {
                         handle_get_api(stream, sql_connection, request_path);
                     } else {
                         handle_get_file(stream, settings, request_path);
                     }
                 }
                 "POST" => {
-                    if request_path.contains("/api/") {
-                        let content_length: u64 = http_request
+                    if request_path.starts_with("/api/") {
+                        let content_length: usize = http_request
                             .iter()
-                            .find(|line| line.to_lowercase().contains("content-length"))
+                            .find(|line| line.to_lowercase().starts_with("content-length"))
                             .and_then(|line| line.split(":").nth(1))
                             .and_then(|length| length.trim().parse().ok())
                             .unwrap_or(0);
 
+                        let mut body = String::with_capacity(content_length);
                         if content_length > 0 {
-                            let mut body = String::with_capacity(content_length as usize);
                             buf_reader
-                                .take(content_length)
+                                .take(content_length as u64)
                                 .read_to_string(&mut body)
                                 .unwrap();
-
-                            println!("{body}");
                         }
 
-                        handle_post_api(stream, sql_connection, request_path);
+                        handle_post_api(stream, sql_connection, request_path, body);
                     } else {
                         serve_404_json(stream, format!("Invalid api: {request_path}"));
                     }
@@ -138,22 +131,37 @@ fn main() {
 }
 
 fn handle_post_api(
-    mut stream: TcpStream,
+    stream: TcpStream,
     sql_connection: Arc<Mutex<Connection>>,
     request_path: &str,
+    body: String,
 ) {
     match request_path {
         "/api/tasks" => {
-            // let task = Task::from_json()
+            let task = match Task::from_json(body.as_str()) {
+                Ok(task) => task,
+                Err(err) => {
+                    serve_400_json(stream, err.to_string());
+                    return;
+                }
+            };
+
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(task.to_sql_insert().as_str(), ()) {
+                Ok(_) => {}
+                Err(err) => {
+                    serve_500_json(stream, err.to_string());
+                    return;
+                }
+            }
+            drop(sql_connection);
+
             serve_204_nocontent(stream);
         }
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
     }
-    // let insert_result = sql_connection
-    //     .execute(test_task.to_sql_insert().as_str(), ())
-    //     .unwrap();
 }
 
 fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
@@ -282,6 +290,22 @@ fn serve_500_json(mut stream: TcpStream, message: String) {
     match stream.write_all(response.as_bytes()) {
         Err(err) => {
             println!("Could not write 500 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
+}
+
+fn serve_400_json(mut stream: TcpStream, message: String) {
+    let message = format!("{{\"error\":{{\"code\":400,\"message\":\"400 Bad Request\",\"internalMessage\":\"{message}\"}}}}");
+    let response = format!(
+        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 400 message to stream");
             println!("{err}");
         }
         _ => {}
