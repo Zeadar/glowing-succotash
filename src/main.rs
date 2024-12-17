@@ -1,6 +1,8 @@
-use data_structs::{Settings, Sql, Task};
+use data_structs::{Settings, Sql, Task, User};
 use mime_guess;
+use rand::random;
 use rusqlite::Connection;
+use sha256::digest;
 use std::{
     collections::HashMap,
     fs,
@@ -9,6 +11,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use threadspool::ThreadSpool;
+use uuid::Uuid;
 
 mod data_structs;
 mod threadspool;
@@ -41,7 +44,7 @@ fn main() {
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
-    let pool = ThreadSpool::new(settings.n_threads);
+    let spool = ThreadSpool::new(settings.n_threads);
     let listener: TcpListener = match TcpListener::bind(&addr) {
         Ok(listener) => listener,
         Err(err) => {
@@ -54,7 +57,7 @@ fn main() {
         let settings = settings.clone();
         let sql_connection = sql_connection.clone();
 
-        pool.execute(|| {
+        spool.execute(|| {
             //lets have a limit of one mibibyte as for now
             let mut buf_reader = BufReader::new(&mut stream).take(1048576);
 
@@ -70,12 +73,12 @@ fn main() {
                         println!("{err}");
                     }
                 }
-                let trim_line = buffer.trim().to_lowercase();
-                buffer.clear();
+                let trim_line = buffer.trim();
                 if trim_line.is_empty() {
                     break;
                 }
-                http_header.push(trim_line);
+                http_header.push(trim_line.to_string());
+                buffer.clear();
             }
 
             if http_header.is_empty() {
@@ -95,11 +98,11 @@ fn main() {
                 path => path,
             };
 
-            let header_map: HashMap<&str, &str> = http_header[1..]
+            let header_map: HashMap<String, &str> = http_header[1..]
                 .into_iter()
                 .map(|line| {
-                    let mut line = line.split(":");
-                    (line.nth(0).unwrap_or(""), line.nth(1).unwrap_or(""))
+                    let (key, value) = line.split_once(":").unwrap_or(("", ""));
+                    (key.to_lowercase(), value.trim())
                 })
                 .collect();
 
@@ -165,7 +168,32 @@ fn handle_post_api(
 
             serve_204_nocontent(stream);
         }
-        "/api/user" => {}
+        "/api/user" => {
+            let mut user = match User::from_json(body.as_str()) {
+                Ok(user) => user,
+                Err(err) => {
+                    serve_400_json(stream, err.to_string());
+                    return;
+                }
+            };
+            user.salt = Some(random());
+            let mut passwd = user.password.as_bytes().to_owned();
+            passwd.extend(user.salt);
+            user.password = digest(passwd);
+            user.id = Some(Uuid::now_v7().to_string());
+
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(user.to_sql_insert().as_str(), ()) {
+                Ok(_) => {}
+                Err(err) => {
+                    serve_500_json(stream, err.to_string());
+                    return;
+                }
+            }
+            drop(sql_connection);
+
+            serve_200_json(stream, user.to_json());
+        }
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
@@ -175,14 +203,14 @@ fn handle_post_api(
 fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
     match request_path {
         "/api/tasks" => {
-            let json_tasks = match query_to_json(sql_connection, "SELECT * FROM tasks") {
+            let json_tasks = match query_to_json::<Task>(sql_connection, "SELECT * FROM tasks") {
                 Ok(strings) => strings.join(","),
                 Err(err) => {
                     serve_500_json(stream, err.to_string());
                     return;
                 }
             };
-            serve_json(stream, format!("[{json_tasks}]"));
+            serve_200_json(stream, format!("[{json_tasks}]"));
         }
         "/api/user" => {}
         _ => {
@@ -226,7 +254,32 @@ fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path:
     }
 }
 
-fn serve_json(mut stream: TcpStream, body: String) {
+fn query_to_json<T: Sql>(
+    sql_connection: Arc<Mutex<Connection>>,
+    sql_query: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut results = Vec::new();
+
+    {
+        let conn = sql_connection.lock().unwrap();
+        let mut statement = conn.prepare(sql_query)?;
+        //Would totally love to drop the connection mutex before any data conversions,
+        //however, the data from 'query()' does not live long enough rip
+        let query = statement.query_map([], |row| T::from_sql_row(row))?;
+
+        results.extend(query);
+    }
+
+    let json: Vec<String> = results
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .map(|t| t.to_json())
+        .collect();
+
+    Ok(json)
+}
+
+fn serve_200_json(mut stream: TcpStream, body: String) {
     let body = body.as_bytes();
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
@@ -246,31 +299,6 @@ fn serve_json(mut stream: TcpStream, body: String) {
         }
         _ => {}
     }
-}
-
-fn query_to_json(
-    sql_connection: Arc<Mutex<Connection>>,
-    sql_query: &str,
-) -> rusqlite::Result<Vec<String>> {
-    let mut results = Vec::new();
-
-    {
-        let conn = sql_connection.lock().unwrap();
-        let mut statement = conn.prepare(sql_query)?;
-        //Would totally love to drop the connection mutex before any data conversions,
-        //however, the data from 'query()' does not live long enough rip
-        let query = statement.query_map([], |row| Task::from_sql_row(row))?;
-
-        results.extend(query);
-    }
-
-    let json: Vec<String> = results
-        .into_iter()
-        .filter_map(|r| r.ok())
-        .map(|task| task.to_json())
-        .collect();
-
-    Ok(json)
 }
 
 fn serve_404_json(mut stream: TcpStream, message: String) {

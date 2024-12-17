@@ -6,12 +6,10 @@ use serde_json;
 use uuid::Uuid;
 
 pub trait Sql {
-    type Me;
-
     fn to_sql_insert(&self) -> String;
-    fn from_sql_row(row: &rusqlite::Row) -> Result<Self::Me, rusqlite::Error>;
+    fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error>;
     fn to_json(&self) -> String;
-    fn from_json(json: &str) -> Result<Self::Me, serde_json::Error>;
+    fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error>;
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -35,14 +33,12 @@ pub struct Task {
 }
 
 impl Sql for Task {
-    type Me = Self;
-
     fn to_sql_insert(&self) -> String {
         format!("INSERT INTO tasks (id, assign_date, due_date, title, description, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}');",
             self.id.clone().unwrap_or(Uuid::now_v7().to_string()), self.assign_date, self.due_date, self.title, self.description, self.user_id )
     }
 
-    fn from_sql_row(row: &rusqlite::Row) -> Result<Self::Me, rusqlite::Error> {
+    fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
         let t = Task {
             id: row.get(0)?,
             assign_date: row.get(2)?,
@@ -51,58 +47,56 @@ impl Sql for Task {
             description: row.get(4)?,
             user_id: row.get(5)?,
         };
-        Ok(t)
+        Ok(Box::new(t))
     }
 
     fn to_json(&self) -> String {
         serde_json::ser::to_string(self).unwrap()
     }
 
-    fn from_json(json: &str) -> Result<Self::Me, serde_json::Error> {
+    fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
         let t: Task = serde_json::de::from_str(json)?;
-        Ok(t)
+        Ok(Box::new(t))
     }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct User {
-    id: Option<String>,
+    pub id: Option<String>,
     username: String,
     #[serde(skip_serializing)]
-    password: String,
+    pub password: String,
     #[serde(skip_serializing)]
-    salt: Option<u64>,
+    pub salt: Option<u8>,
 }
 
 impl Sql for User {
-    type Me = Self;
-
     fn to_sql_insert(&self) -> String {
         format!(
             "INSERT INTO users (id, username, password, salt) VALUES ('{}', '{}', '{}', {})",
             self.id.to_owned().unwrap_or(Uuid::now_v7().to_string()),
             self.username,
             self.password,
-            self.salt.to_owned().unwrap_or(rand::random()),
+            self.salt.unwrap()
         )
     }
 
-    fn from_sql_row(row: &rusqlite::Row) -> Result<Self::Me, rusqlite::Error> {
+    fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
         let u = User {
             id: row.get("id")?,
             username: row.get(1)?,
             password: row.get(2)?,
             salt: row.get(3)?,
         };
-        Ok(u)
+        Ok(Box::new(u))
     }
 
     fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
+        serde_json::ser::to_string(self).unwrap()
     }
 
-    fn from_json(json: &str) -> Result<Self::Me, serde_json::Error> {
+    fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
         let u: User = serde_json::de::from_str(json)?;
-        Ok(u)
+        Ok(Box::new(u))
     }
 }
