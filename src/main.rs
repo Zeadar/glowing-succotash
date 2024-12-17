@@ -2,6 +2,7 @@ use data_structs::{Settings, Sql, Task};
 use mime_guess;
 use rusqlite::Connection;
 use std::{
+    collections::HashMap,
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
@@ -32,6 +33,9 @@ fn main() {
     let settings = Arc::new(settings);
 
     let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
+    sql_connection
+        .execute("PRAGMA foreign_keys = ON;", [])
+        .unwrap();
     let sql_connection = Arc::new(Mutex::new(sql_connection));
 
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
@@ -54,7 +58,7 @@ fn main() {
             //lets have a limit of one mibibyte as for now
             let mut buf_reader = BufReader::new(&mut stream).take(1048576);
 
-            let mut http_request: Vec<String> = Vec::new();
+            let mut http_header: Vec<String> = Vec::new();
             let mut buffer = String::new();
 
             //Used to make iterator with lines() but that took ownership
@@ -66,22 +70,22 @@ fn main() {
                         println!("{err}");
                     }
                 }
-                let trim_line = buffer.trim();
+                let trim_line = buffer.trim().to_lowercase();
+                buffer.clear();
                 if trim_line.is_empty() {
                     break;
                 }
-                http_request.push(trim_line.to_string());
-                buffer.clear();
+                http_header.push(trim_line);
             }
 
-            if http_request.is_empty() {
+            if http_header.is_empty() {
                 println!("Empty request!");
                 return;
             }
 
-            let request_line: Vec<&str> = http_request[0].split(" ").collect();
+            let request_line: Vec<&str> = http_header[0].split(" ").collect();
             if request_line.len() != 3 {
-                println!("invalid header\n{}", http_request[0]);
+                println!("invalid header\n{}", http_header[0]);
                 return;
             }
 
@@ -90,6 +94,14 @@ fn main() {
                 "/" => "/index.html",
                 path => path,
             };
+
+            let header_map: HashMap<&str, &str> = http_header[1..]
+                .into_iter()
+                .map(|line| {
+                    let mut line = line.split(":");
+                    (line.nth(0).unwrap_or(""), line.nth(1).unwrap_or(""))
+                })
+                .collect();
 
             match request_type {
                 "GET" => {
@@ -101,12 +113,7 @@ fn main() {
                 }
                 "POST" => {
                     if request_path.starts_with("/api/") {
-                        let content_length: usize = http_request
-                            .iter()
-                            .find(|line| line.to_lowercase().starts_with("content-length"))
-                            .and_then(|line| line.split(":").nth(1))
-                            .and_then(|length| length.trim().parse().ok())
-                            .unwrap_or(0);
+                        let content_length = header_map["content-length"].parse().unwrap_or(0);
 
                         let mut body = String::with_capacity(content_length);
                         if content_length > 0 {
@@ -158,6 +165,7 @@ fn handle_post_api(
 
             serve_204_nocontent(stream);
         }
+        "/api/user" => {}
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
@@ -176,6 +184,7 @@ fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, req
             };
             serve_json(stream, format!("[{json_tasks}]"));
         }
+        "/api/user" => {}
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
