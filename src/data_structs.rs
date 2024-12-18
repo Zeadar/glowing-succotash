@@ -1,5 +1,4 @@
-use chrono::NaiveDate;
-use rand;
+use chrono::{NaiveDate, Utc};
 use rusqlite;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -19,6 +18,11 @@ pub struct Settings {
     pub bind_port: String,
     pub n_threads: usize,
     pub data_path: String,
+}
+
+pub struct Session_User {
+    pub user_id: String,
+    pub expire: Utc,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -63,7 +67,7 @@ impl Sql for Task {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct User {
     pub id: Option<String>,
-    username: String,
+    pub username: String,
     #[serde(skip_serializing)]
     pub password: String,
     #[serde(skip_serializing)]

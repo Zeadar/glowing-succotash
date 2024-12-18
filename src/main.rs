@@ -1,4 +1,4 @@
-use data_structs::{Settings, Sql, Task, User};
+use data_structs::{Session_User, Settings, Sql, Task, User};
 use mime_guess;
 use rand::random;
 use rusqlite::Connection;
@@ -8,7 +8,7 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 use threadspool::ThreadSpool;
 use uuid::Uuid;
@@ -44,6 +44,9 @@ fn main() {
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
+    let session: HashMap<String, Session_User> = HashMap::new();
+    let session = Arc::new(RwLock::new(session));
+
     let spool = ThreadSpool::new(settings.n_threads);
     let listener: TcpListener = match TcpListener::bind(&addr) {
         Ok(listener) => listener,
@@ -56,6 +59,7 @@ fn main() {
         let mut stream = stream.unwrap();
         let settings = settings.clone();
         let sql_connection = sql_connection.clone();
+        let session = session.clone();
 
         spool.execute(|| {
             //lets have a limit of one mibibyte as for now
@@ -109,6 +113,8 @@ fn main() {
             match request_type {
                 "GET" => {
                     if request_path.starts_with("/api/") {
+                        let logged_in = header_map.get("authority");
+
                         handle_get_api(stream, sql_connection, request_path);
                     } else {
                         handle_get_file(stream, settings, request_path);
@@ -116,7 +122,11 @@ fn main() {
                 }
                 "POST" => {
                     if request_path.starts_with("/api/") {
-                        let content_length = header_map["content-length"].parse().unwrap_or(0);
+                        let content_length = header_map
+                            .get("content-length")
+                            .unwrap_or(&"0")
+                            .parse()
+                            .unwrap_or(0);
 
                         let mut body = String::with_capacity(content_length);
                         if content_length > 0 {
@@ -197,6 +207,58 @@ fn handle_post_api(
 
             serve_200_json(stream, user.to_json());
         }
+        "/api/login" => {
+            let user: User = match serde_json::de::from_str(body.as_str()) {
+                Ok(login) => login,
+                Err(err) => {
+                    serve_400_json(stream, err.to_string());
+                    return;
+                }
+            };
+
+            let passwd = user.password;
+
+            let user = match query_to_object::<User>(
+                sql_connection,
+                format!("SELECT * FROM users WHERE username = '{}';", user.username).as_str(),
+            ) {
+                Ok(user) => user,
+                Err(err) => {
+                    serve_400_json(stream, err.to_string());
+                    return;
+                }
+            };
+
+            let user = match user.first() {
+                Some(user) => user,
+                None => {
+                    serve_400_json(stream, String::from("User not found or invalid password"));
+                    return;
+                }
+            };
+
+            println!("{user:?}");
+
+            let mut hashed_passwd: Vec<u8> = passwd.as_bytes().into_iter().map(|b| *b).collect();
+            hashed_passwd.extend(user.salt);
+            let hashed_passwd = digest(hashed_passwd);
+
+            println!("{}\n{}", user.password, hashed_passwd);
+
+            if user.password == hashed_passwd {
+                let json = format!(
+                    "{{\"username\": \"{}\",\"userId\":\"{}\",\"Authority\":\"{}\"}}",
+                    user.username,
+                    user.id.as_ref().unwrap(),
+                    "hello"
+                );
+                println!("{json}");
+                serve_200_json(stream, json);
+            } else {
+                serve_400_json(stream, String::from("User not found or invalid password"));
+                return;
+            }
+        }
         _ => {
             serve_404_json(stream, format!("Invalid api: {request_path}"));
         }
@@ -206,14 +268,18 @@ fn handle_post_api(
 fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
     match request_path {
         "/api/tasks" => {
-            let json_tasks = match query_to_json::<Task>(sql_connection, "SELECT * FROM tasks") {
-                Ok(strings) => strings.join(","),
-                Err(err) => {
-                    serve_500_json(stream, err.to_string());
-                    return;
-                }
-            };
-            serve_200_json(stream, format!("[{json_tasks}]"));
+            let json_tasks: Vec<String> =
+                match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
+                    Ok(vec_of_boxes) => vec_of_boxes
+                        .into_iter()
+                        .map(|task| task.to_json())
+                        .collect(),
+                    Err(err) => {
+                        serve_500_json(stream, err.to_string());
+                        return;
+                    }
+                };
+            serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
         }
         "/api/user" => {}
         _ => {
@@ -257,10 +323,10 @@ fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path:
     }
 }
 
-fn query_to_json<T: Sql>(
+fn query_to_object<T: Sql>(
     sql_connection: Arc<Mutex<Connection>>,
     sql_query: &str,
-) -> rusqlite::Result<Vec<String>> {
+) -> rusqlite::Result<Vec<Box<T>>> {
     let mut results = Vec::new();
 
     {
@@ -273,13 +339,9 @@ fn query_to_json<T: Sql>(
         results.extend(query);
     }
 
-    let json: Vec<String> = results
-        .into_iter()
-        .filter_map(|r| r.ok())
-        .map(|t| t.to_json())
-        .collect();
+    let vec_of_boxes = results.into_iter().filter_map(|r| r.ok()).collect();
 
-    Ok(json)
+    Ok(vec_of_boxes)
 }
 
 fn serve_200_json(mut stream: TcpStream, body: String) {
