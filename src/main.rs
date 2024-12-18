@@ -124,6 +124,9 @@ fn main() {
                                 .take(content_length as u64)
                                 .read_to_string(&mut body)
                                 .unwrap();
+                        } else {
+                            serve_411_json(stream);
+                            return;
                         }
 
                         handle_post_api(stream, sql_connection, request_path, body);
@@ -186,7 +189,7 @@ fn handle_post_api(
             match sql_connection.execute(user.to_sql_insert().as_str(), ()) {
                 Ok(_) => {}
                 Err(err) => {
-                    serve_500_json(stream, err.to_string());
+                    serve_400_json(stream, err.to_string());
                     return;
                 }
             }
@@ -317,22 +320,6 @@ fn serve_404_json(mut stream: TcpStream, message: String) {
     };
 }
 
-fn serve_500_json(mut stream: TcpStream, message: String) {
-    let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
-    let response = format!(
-        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
-        message.as_bytes().len(),
-        message
-    );
-    match stream.write_all(response.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 500 message to stream");
-            println!("{err}");
-        }
-        _ => {}
-    };
-}
-
 fn serve_400_json(mut stream: TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":400,\"message\":\"400 Bad Request\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
@@ -343,6 +330,37 @@ fn serve_400_json(mut stream: TcpStream, message: String) {
     match stream.write_all(response.as_bytes()) {
         Err(err) => {
             println!("Could not write 400 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
+}
+fn serve_411_json(mut stream: TcpStream) {
+    let message = format!("{{\"error\":{{\"code\":411,\"message\":\"Length Required\"}}}}");
+    let response = format!(
+        "HTTP/1.1 411 Length Required\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 411 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
+}
+
+fn serve_500_json(mut stream: TcpStream, message: String) {
+    let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
+    let response = format!(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 500 message to stream");
             println!("{err}");
         }
         _ => {}
