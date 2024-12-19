@@ -20,6 +20,7 @@ pub struct Settings {
     pub data_path: String,
 }
 
+#[derive(Clone)]
 pub struct SessionUser {
     pub user_id: String,
     pub expire: DateTime<Utc>,

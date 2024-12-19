@@ -1,3 +1,4 @@
-Img {
-  max-width: 50%;
+.line {
+  display: flex;
+  justify-items: center;
 }

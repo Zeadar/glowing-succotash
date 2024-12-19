@@ -141,7 +141,7 @@ fn handle_api_request(
     request_line: String,
 ) {
     match request_line.as_str() {
-        "GET /api/tasks" => {
+        "GET /api/task" => {
             let json_tasks: Vec<String> =
                 match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
                     Ok(vec_of_boxes) => vec_of_boxes
@@ -155,7 +155,7 @@ fn handle_api_request(
                 };
             serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
         }
-        "POST /api/tasks" => {
+        "POST /api/task" => {
             let body = extract_body(stream, buf_reader, header);
             if body.is_none() {
                 return;
@@ -180,6 +180,33 @@ fn handle_api_request(
             drop(sql_connection);
 
             serve_200_json(stream, task.to_json());
+        }
+        "GET /api/user" => {
+            let authority = match header.get("authority") {
+                Some(auth) => *auth,
+                None => {
+                    serve_400_json(
+                        stream,
+                        String::from("This will be an unauth error late I promise"),
+                    );
+                    return;
+                }
+            };
+
+            let session = session.read().unwrap();
+            let session_user = match session.get(authority) {
+                Some(yay) => yay.clone(),
+                None => {
+                    serve_400_json(stream, String::from("This will be expire issue later"));
+                    return;
+                }
+            };
+            drop(session);
+
+            serve_200_json(
+                stream,
+                format!("{{\"userId\":\"{}\"}}", session_user.user_id),
+            );
         }
         "POST /api/user" => {
             let body = extract_body(stream, buf_reader, header);

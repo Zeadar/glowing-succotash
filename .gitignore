@@ -25,6 +25,7 @@ Cargo.lock
 /target
 
 public/*
+!public/index.js
 !public/index.html
 !public/index.css
 !public/favicon.ico

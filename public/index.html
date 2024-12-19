@@ -1,18 +1,50 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
+    <meta charset="utf-8" />
     <title>Hello!</title>
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
-    <link rel="stylesheet" href="index.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="index.css" />
   </head>
   <!-- <style src="index.css"></style> -->
   <body>
-    <div style="text-align: center;">
+    <div style="text-align: center">
       <h1>Hello!</h1>
-      <p>Did these load at the same time?</p>
-      <img src="wallhaven-yxl66g.jpg">
-      <img src="wallhaven-zywwky.jpg">
+      <div class="login">
+        <span>username:</span>
+        <input id="userinput" type="text" />
+      </div>
+      <div class="login">
+        <span>password:</span>
+        <input id="passwordinput" type="" />
+      </div>
+      <div class="login">
+        <button id="login">login</button>
+        <button id="create">create</button>
+        <button id="task">get tasks</button>
+        <button id="deauth">remove auth</button>
+      </div>
+      <div class="login">
+        <textarea name="" id="textarea" cols="80" rows="20"></textarea>
+      </div>
+
+      <div class="login">
+        <span>title</span>
+        <input id="inputtitle" type="text" />
+      </div>
+      <div class="login">
+        <span>description</span>
+        <input id="inputdesc" type="text" />
+      </div>
+      <div class="login">
+        <span>due date</span>
+        <input id="inputdate" type="date" />
+      </div>
+      <div class="login">
+        <button id="newtask">new task</button>
+        <div class="line"></div>
+      </div>
     </div>
+    <script src="index.js"></script>
   </body>
 </html>
