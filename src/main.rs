@@ -1,4 +1,5 @@
-use data_structs::{Session_User, Settings, Sql, Task, User};
+use chrono::{Datelike, TimeDelta, Utc};
+use data_structs::{SessionUser, Settings, Sql, Task, User};
 use mime_guess;
 use rand::random;
 use rusqlite::Connection;
@@ -44,7 +45,7 @@ fn main() {
     let addr = format!("{}:{}", settings.bind_addr, settings.bind_port);
     println!("{addr}");
 
-    let session: HashMap<String, Session_User> = HashMap::new();
+    let session: HashMap<String, SessionUser> = HashMap::new();
     let session = Arc::new(RwLock::new(session));
 
     let spool = ThreadSpool::new(settings.n_threads);
@@ -56,14 +57,14 @@ fn main() {
         }
     };
     for stream in listener.incoming() {
-        let mut stream = stream.unwrap();
+        let stream = stream.unwrap();
         let settings = settings.clone();
         let sql_connection = sql_connection.clone();
         let session = session.clone();
 
-        spool.execute(|| {
+        spool.execute(move || {
             //lets have a limit of one mibibyte as for now
-            let mut buf_reader = BufReader::new(&mut stream).take(1048576);
+            let mut buf_reader = BufReader::new(&stream).take(1048576);
 
             let mut http_header: Vec<String> = Vec::new();
             let mut buffer = String::new();
@@ -90,78 +91,77 @@ fn main() {
                 return;
             }
 
-            let request_line: Vec<&str> = http_header[0].split(" ").collect();
-            if request_line.len() != 3 {
-                println!("invalid header\n{}", http_header[0]);
-                return;
-            }
-
-            let request_type = request_line[0];
-            let request_path = match request_line[1] {
-                "/" => "/index.html",
-                path => path,
+            let top_header: Vec<&str> = http_header[0].split(" ").collect();
+            let request_line = match top_header
+                .iter()
+                .filter(|header| !header.contains("HTTP"))
+                .map(|h| h.to_string())
+                .reduce(|a, b| format!("{a} {b}"))
+            {
+                Some(h) => h,
+                None => {
+                    serve_404_html(stream, String::from("Your header sucks"));
+                    return;
+                }
             };
+
+            println!("Top header {request_line}");
 
             let header_map: HashMap<String, &str> = http_header[1..]
                 .into_iter()
-                .map(|line| {
-                    let (key, value) = line.split_once(":").unwrap_or(("", ""));
+                .filter_map(|line| line.split_once(":"))
+                .map(|pair| {
+                    let (key, value) = pair;
                     (key.to_lowercase(), value.trim())
                 })
                 .collect();
 
-            match request_type {
-                "GET" => {
-                    if request_path.starts_with("/api/") {
-                        let logged_in = header_map.get("authority");
-
-                        handle_get_api(stream, sql_connection, request_path);
-                    } else {
-                        handle_get_file(stream, settings, request_path);
-                    }
-                }
-                "POST" => {
-                    if request_path.starts_with("/api/") {
-                        let content_length = header_map
-                            .get("content-length")
-                            .unwrap_or(&"0")
-                            .parse()
-                            .unwrap_or(0);
-
-                        let mut body = String::with_capacity(content_length);
-                        if content_length > 0 {
-                            buf_reader
-                                .take(content_length as u64)
-                                .read_to_string(&mut body)
-                                .unwrap();
-                        } else {
-                            serve_411_json(stream);
-                            return;
-                        }
-
-                        handle_post_api(stream, sql_connection, request_path, body);
-                    } else {
-                        serve_404_json(stream, format!("Invalid api: {request_path}"));
-                    }
-                }
-                _ => {
-                    serve_404_html(stream, format!("Unrecognized request type {request_type}"));
-                    return;
-                }
+            if request_line.contains("/api/") {
+                handle_api_request(
+                    &stream,
+                    buf_reader,
+                    header_map,
+                    sql_connection,
+                    session,
+                    request_line,
+                );
+            } else {
+                handle_file_request(stream, settings, request_line);
             }
         });
     }
 }
 
-fn handle_post_api(
-    stream: TcpStream,
+fn handle_api_request(
+    stream: &TcpStream,
+    buf_reader: std::io::Take<BufReader<&TcpStream>>,
+    header: HashMap<String, &str>,
     sql_connection: Arc<Mutex<Connection>>,
-    request_path: &str,
-    body: String,
+    session: Arc<RwLock<HashMap<String, SessionUser>>>,
+    request_line: String,
 ) {
-    match request_path {
-        "/api/tasks" => {
-            let task = match Task::from_json(body.as_str()) {
+    match request_line.as_str() {
+        "GET /api/tasks" => {
+            let json_tasks: Vec<String> =
+                match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
+                    Ok(vec_of_boxes) => vec_of_boxes
+                        .into_iter()
+                        .map(|task| task.to_json())
+                        .collect(),
+                    Err(err) => {
+                        serve_500_json(stream, err.to_string());
+                        return;
+                    }
+                };
+            serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
+        }
+        "POST /api/tasks" => {
+            let body = extract_body(stream, buf_reader, header);
+            if body.is_none() {
+                return;
+            }
+
+            let task = match Task::from_json(body.unwrap().as_str()) {
                 Ok(task) => task,
                 Err(err) => {
                     serve_400_json(stream, err.to_string());
@@ -179,10 +179,15 @@ fn handle_post_api(
             }
             drop(sql_connection);
 
-            serve_204_nocontent(stream);
+            serve_200_json(stream, task.to_json());
         }
-        "/api/user" => {
-            let mut user = match User::from_json(body.as_str()) {
+        "POST /api/user" => {
+            let body = extract_body(stream, buf_reader, header);
+            if body.is_none() {
+                return;
+            }
+
+            let mut user = match User::from_json(body.unwrap().as_str()) {
                 Ok(user) => user,
                 Err(err) => {
                     serve_400_json(stream, err.to_string());
@@ -207,8 +212,13 @@ fn handle_post_api(
 
             serve_200_json(stream, user.to_json());
         }
-        "/api/login" => {
-            let user: User = match serde_json::de::from_str(body.as_str()) {
+        "POST /api/login" => {
+            let body = extract_body(stream, buf_reader, header);
+            if body.is_none() {
+                return;
+            }
+
+            let user: User = match serde_json::de::from_str(body.unwrap().as_str()) {
                 Ok(login) => login,
                 Err(err) => {
                     serve_400_json(stream, err.to_string());
@@ -237,20 +247,29 @@ fn handle_post_api(
                 }
             };
 
-            println!("{user:?}");
-
             let mut hashed_passwd: Vec<u8> = passwd.as_bytes().into_iter().map(|b| *b).collect();
             hashed_passwd.extend(user.salt);
             let hashed_passwd = digest(hashed_passwd);
-
-            println!("{}\n{}", user.password, hashed_passwd);
-
             if user.password == hashed_passwd {
+                let session_uuid = Uuid::now_v7();
+
+                {
+                    //TODO consider having user_id as key...
+                    let mut session = session.write().unwrap();
+                    session.insert(
+                        session_uuid.to_string(),
+                        SessionUser {
+                            user_id: user.id.as_ref().unwrap().clone(),
+                            expire: Utc::now() + TimeDelta::minutes(1),
+                        },
+                    );
+                }
+
                 let json = format!(
-                    "{{\"username\": \"{}\",\"userId\":\"{}\",\"Authority\":\"{}\"}}",
+                    "{{\"username\": \"{}\",\"userId\":\"{}\",\"authority\":\"{}\"}}",
                     user.username,
                     user.id.as_ref().unwrap(),
-                    "hello"
+                    session_uuid.to_string(),
                 );
                 println!("{json}");
                 serve_200_json(stream, json);
@@ -260,35 +279,53 @@ fn handle_post_api(
             }
         }
         _ => {
-            serve_404_json(stream, format!("Invalid api: {request_path}"));
+            serve_404_json(stream, format!("No match for {request_line}"));
         }
     }
 }
 
-fn handle_get_api(stream: TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
-    match request_path {
-        "/api/tasks" => {
-            let json_tasks: Vec<String> =
-                match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
-                    Ok(vec_of_boxes) => vec_of_boxes
-                        .into_iter()
-                        .map(|task| task.to_json())
-                        .collect(),
-                    Err(err) => {
-                        serve_500_json(stream, err.to_string());
-                        return;
-                    }
-                };
-            serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
+fn extract_body(
+    stream: &TcpStream,
+    buf_reader: std::io::Take<BufReader<&TcpStream>>,
+    header: HashMap<String, &str>,
+) -> Option<String> {
+    let content_length = header
+        .get("content-length")
+        .unwrap_or(&"0")
+        .parse()
+        .unwrap_or(0);
+
+    let mut body = String::with_capacity(content_length);
+
+    if content_length > 0 {
+        match buf_reader
+            .take(content_length as u64)
+            .read_to_string(&mut body)
+        {
+            Ok(_) => Some(body),
+            Err(err) => {
+                serve_400_json(stream, format!("{err}"));
+                return None;
+            }
         }
-        "/api/user" => {}
-        _ => {
-            serve_404_json(stream, format!("Invalid api: {request_path}"));
-        }
+    } else {
+        serve_411_json(stream);
+        return None;
     }
 }
 
-fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path: &str) {
+fn handle_file_request(mut stream: TcpStream, settings: Arc<Settings>, request_line: String) {
+    let request_path = match request_line.split(" ").last() {
+        Some(path) => match path {
+            "/" => "/index.html",
+            path => path,
+        },
+        None => {
+            serve_404_html(stream, format!("Your header sucks!"));
+            return;
+        }
+    };
+
     let file_path = format!("{}{request_path}", settings.root_path);
     let file_data = match fs::read(&file_path) {
         Ok(data) => data,
@@ -323,6 +360,15 @@ fn handle_get_file(mut stream: TcpStream, settings: Arc<Settings>, request_path:
     }
 }
 
+// fn handle_get_api(stream: &TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
+//     match request_path {
+//         "/api/user" => {}
+//         _ => {
+//             serve_404_json(stream, format!("Invalid api: {request_path}"));
+//         }
+//     }
+// }
+
 fn query_to_object<T: Sql>(
     sql_connection: Arc<Mutex<Connection>>,
     sql_query: &str,
@@ -344,7 +390,7 @@ fn query_to_object<T: Sql>(
     Ok(vec_of_boxes)
 }
 
-fn serve_200_json(mut stream: TcpStream, body: String) {
+fn serve_200_json(mut stream: &TcpStream, body: String) {
     let body = body.as_bytes();
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
@@ -366,7 +412,7 @@ fn serve_200_json(mut stream: TcpStream, body: String) {
     }
 }
 
-fn serve_404_json(mut stream: TcpStream, message: String) {
+fn serve_404_json(mut stream: &TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":404,\"message\":\"404 Resource not found\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
         "HTTP/1.1 404 Resource Not Found\r\nContent-Length: {}\r\n\r\n{}",
@@ -382,7 +428,7 @@ fn serve_404_json(mut stream: TcpStream, message: String) {
     };
 }
 
-fn serve_400_json(mut stream: TcpStream, message: String) {
+fn serve_400_json(mut stream: &TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":400,\"message\":\"400 Bad Request\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
         "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
@@ -397,7 +443,7 @@ fn serve_400_json(mut stream: TcpStream, message: String) {
         _ => {}
     };
 }
-fn serve_411_json(mut stream: TcpStream) {
+fn serve_411_json(mut stream: &TcpStream) {
     let message = format!("{{\"error\":{{\"code\":411,\"message\":\"Length Required\"}}}}");
     let response = format!(
         "HTTP/1.1 411 Length Required\r\nContent-Length: {}\r\n\r\n{}",
@@ -413,7 +459,7 @@ fn serve_411_json(mut stream: TcpStream) {
     };
 }
 
-fn serve_500_json(mut stream: TcpStream, message: String) {
+fn serve_500_json(mut stream: &TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
         "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
@@ -429,7 +475,7 @@ fn serve_500_json(mut stream: TcpStream, message: String) {
     };
 }
 
-fn serve_204_nocontent(mut stream: TcpStream) {
+fn serve_204_nocontent(mut stream: &TcpStream) {
     let header = "HTTP/1.1 204 No Content\r\n";
     match stream.write_all(header.as_bytes()) {
         Err(err) => {

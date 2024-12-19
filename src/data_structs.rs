@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -20,9 +20,9 @@ pub struct Settings {
     pub data_path: String,
 }
 
-pub struct Session_User {
+pub struct SessionUser {
     pub user_id: String,
-    pub expire: Utc,
+    pub expire: DateTime<Utc>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
