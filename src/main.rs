@@ -1,4 +1,4 @@
-use chrono::{Datelike, TimeDelta, Utc};
+use chrono::{TimeDelta, Utc};
 use data_structs::{SessionUser, Settings, Sql, Task, User};
 use mime_guess;
 use rand::random;
@@ -182,31 +182,12 @@ fn handle_api_request(
             serve_200_json(stream, task.to_json());
         }
         "GET /api/user" => {
-            let authority = match header.get("authority") {
-                Some(auth) => *auth,
-                None => {
-                    serve_400_json(
-                        stream,
-                        String::from("This will be an unauth error late I promise"),
-                    );
-                    return;
-                }
+            let user_id = match extract_user_id(stream, header, session) {
+                Some(user_id) => user_id,
+                None => return,
             };
 
-            let session = session.read().unwrap();
-            let session_user = match session.get(authority) {
-                Some(yay) => yay.clone(),
-                None => {
-                    serve_400_json(stream, String::from("This will be expire issue later"));
-                    return;
-                }
-            };
-            drop(session);
-
-            serve_200_json(
-                stream,
-                format!("{{\"userId\":\"{}\"}}", session_user.user_id),
-            );
+            serve_200_json(stream, format!("{{\"userId\":\"{}\"}}", user_id));
         }
         "POST /api/user" => {
             let body = extract_body(stream, buf_reader, header);
@@ -309,6 +290,44 @@ fn handle_api_request(
             serve_404_json(stream, format!("No match for {request_line}"));
         }
     }
+}
+
+fn extract_user_id(
+    stream: &TcpStream,
+    header: HashMap<String, &str>,
+    session: Arc<RwLock<HashMap<String, SessionUser>>>,
+) -> Option<String> {
+    let authority = match header.get("authority") {
+        Some(auth) => *auth,
+        None => {
+            serve_403_json(stream, String::from("No auth in header"));
+            return None;
+        }
+    };
+
+    let session_user: SessionUser;
+    {
+        let session = session.read().unwrap();
+        session_user = match session.get(authority) {
+            Some(yay) => yay.clone(),
+            None => {
+                serve_403_json(
+                    stream,
+                    String::from("No user ascocieted with auth in header"),
+                );
+                return None;
+            }
+        };
+    }
+
+    if session_user.expire < Utc::now() {
+        let mut session = session.write().unwrap();
+        session.remove(authority);
+        serve_403_json(stream, String::from("Auth expired"));
+        return None;
+    }
+
+    return Some(session_user.user_id);
 }
 
 fn extract_body(
@@ -443,6 +462,22 @@ fn serve_404_json(mut stream: &TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":404,\"message\":\"404 Resource not found\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
         "HTTP/1.1 404 Resource Not Found\r\nContent-Length: {}\r\n\r\n{}",
+        message.as_bytes().len(),
+        message
+    );
+    match stream.write_all(response.as_bytes()) {
+        Err(err) => {
+            println!("Could not write 404 message to stream");
+            println!("{err}");
+        }
+        _ => {}
+    };
+}
+
+fn serve_403_json(mut stream: &TcpStream, message: String) {
+    let message = format!("{{\"error\":{{\"code\":403,\"message\":\"403 Forbidden\",\"internalMessage\":\"{message}\"}}}}");
+    let response = format!(
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\n\r\n{}",
         message.as_bytes().len(),
         message
     );
