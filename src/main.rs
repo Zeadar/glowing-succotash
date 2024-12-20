@@ -105,7 +105,7 @@ fn main() {
                 }
             };
 
-            println!("Top header {request_line}");
+            println!("{request_line}");
 
             let header_map: HashMap<String, &str> = http_header[1..]
                 .into_iter()
@@ -190,12 +190,12 @@ fn handle_api_request(
             serve_200_json(stream, format!("{{\"userId\":\"{}\"}}", user_id));
         }
         "POST /api/user" => {
-            let body = extract_body(stream, buf_reader, header);
-            if body.is_none() {
-                return;
-            }
+            let body = match extract_body(stream, buf_reader, header) {
+                Some(body) => body,
+                None => return,
+            };
 
-            let mut user = match User::from_json(body.unwrap().as_str()) {
+            let mut user = match User::from_json(body.as_str()) {
                 Ok(user) => user,
                 Err(err) => {
                     serve_400_json(stream, err.to_string());
@@ -221,12 +221,12 @@ fn handle_api_request(
             serve_200_json(stream, user.to_json());
         }
         "POST /api/login" => {
-            let body = extract_body(stream, buf_reader, header);
-            if body.is_none() {
-                return;
-            }
+            let body = match extract_body(stream, buf_reader, header) {
+                Some(body) => body,
+                None => return,
+            };
 
-            let user: User = match serde_json::de::from_str(body.unwrap().as_str()) {
+            let user: User = match serde_json::de::from_str(body.as_str()) {
                 Ok(login) => login,
                 Err(err) => {
                     serve_400_json(stream, err.to_string());
@@ -262,13 +262,12 @@ fn handle_api_request(
                 let session_uuid = Uuid::now_v7();
 
                 {
-                    //TODO consider having user_id as key...
                     let mut session = session.write().unwrap();
                     session.insert(
                         session_uuid.to_string(),
                         SessionUser {
                             user_id: user.id.as_ref().unwrap().clone(),
-                            expire: Utc::now() + TimeDelta::minutes(1),
+                            expire: Utc::now() + TimeDelta::seconds(10),
                         },
                     );
                 }
@@ -406,15 +405,6 @@ fn handle_file_request(mut stream: TcpStream, settings: Arc<Settings>, request_l
     }
 }
 
-// fn handle_get_api(stream: &TcpStream, sql_connection: Arc<Mutex<Connection>>, request_path: &str) {
-//     match request_path {
-//         "/api/user" => {}
-//         _ => {
-//             serve_404_json(stream, format!("Invalid api: {request_path}"));
-//         }
-//     }
-// }
-
 fn query_to_object<T: Sql>(
     sql_connection: Arc<Mutex<Connection>>,
     sql_query: &str,
@@ -537,16 +527,16 @@ fn serve_500_json(mut stream: &TcpStream, message: String) {
     };
 }
 
-fn serve_204_nocontent(mut stream: &TcpStream) {
-    let header = "HTTP/1.1 204 No Content\r\n";
-    match stream.write_all(header.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 204 message to stream");
-            println!("{err}");
-        }
-        _ => {}
-    }
-}
+// fn serve_204_nocontent(mut stream: &TcpStream) {
+//     let header = "HTTP/1.1 204 No Content\r\n";
+//     match stream.write_all(header.as_bytes()) {
+//         Err(err) => {
+//             println!("Could not write 204 message to stream");
+//             println!("{err}");
+//         }
+//         _ => {}
+//     }
+// }
 
 fn serve_404_html(mut stream: TcpStream, message: String) {
     let first = r#"
