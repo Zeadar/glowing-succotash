@@ -23,7 +23,19 @@ document.getElementById("create").addEventListener("click", async (evt) => {
     textarea.value = JSON.stringify(loginResponse, null, 4)
 })
 
-document.getElementById("gettask")
+document.getElementById("task").addEventListener("click", async () => {
+    const authority = window.localStorage.getItem("authority")
+    const headers = new Headers()
+    headers.append("authority", authority)
+
+    const r = await fetch("/api/task", {
+        headers: headers,
+    }).then((r) => r.json())
+
+    console.log(r)
+
+    textarea.value = JSON.stringify(r, null, 4)
+})
 
 document.getElementById("newtask").addEventListener("click", async () => {
     const authority = window.localStorage.getItem("authority")
