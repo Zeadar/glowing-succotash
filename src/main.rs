@@ -259,7 +259,7 @@ fn handle_api_request(
             hashed_passwd.extend(user.salt);
             let hashed_passwd = digest(hashed_passwd);
             if user.password == hashed_passwd {
-                let session_uuid = Uuid::now_v7();
+                let session_uuid = Uuid::new_v4();
 
                 {
                     let mut session = session.write().unwrap();
