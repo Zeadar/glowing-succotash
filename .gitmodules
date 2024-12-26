@@ -1,0 +1,3 @@
+[submodule "public/suffering-silverfish"]
+	path = public/suffering-silverfish
+	url = git@github.com:Zeadar/suffering-silverfish.git
