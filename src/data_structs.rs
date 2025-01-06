@@ -33,24 +33,30 @@ pub struct Task {
     due_date: NaiveDate,
     title: String,
     description: String,
+    recurring_month: bool,
+    recurring_n: bool,
+    recurring_stop: String,
     #[serde(skip_serializing)]
     user_id: String,
 }
 
 impl Sql for Task {
     fn to_sql_insert(&self) -> String {
-        format!("INSERT INTO tasks (id, assign_date, due_date, title, description, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}');",
-            self.id.clone().unwrap_or(Uuid::now_v7().to_string()), self.assign_date, self.due_date, self.title, self.description, self.user_id )
+        format!("INSERT INTO tasks (id, assign_date, due_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}');",
+            self.id.clone().unwrap_or(Uuid::now_v7().to_string()), self.assign_date, self.due_date, self.title, self.description, self.recurring_month, self.recurring_n, self.recurring_stop, self.user_id, )
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
         let t = Task {
-            id: row.get(0)?,
-            assign_date: row.get(2)?,
-            due_date: row.get(1)?,
-            title: row.get(3)?,
-            description: row.get(4)?,
-            user_id: row.get(5)?,
+            id: row.get("id")?,
+            assign_date: row.get("assign_date")?,
+            due_date: row.get("due_date")?,
+            title: row.get("title")?,
+            description: row.get("description")?,
+            recurring_month: row.get("recurring_month")?,
+            recurring_n: row.get("recurring_n")?,
+            recurring_stop: row.get("recurring_stop")?,
+            user_id: row.get("user_id")?,
         };
         Ok(Box::new(t))
     }
@@ -60,8 +66,14 @@ impl Sql for Task {
     }
 
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
-        let t: Task = serde_json::de::from_str(json)?;
-        Ok(Box::new(t))
+        // let t: Task = serde_json::de::from_str(json)?;
+        // Ok(Box::new(t))
+
+        //Making a match here exposes the sillyness of this function
+        match serde_json::de::from_str(json) {
+            Ok(t) => Ok(Box::new(t)),
+            Err(err) => Err(err),
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 const textarea = document.getElementById("textarea")
 
-document.getElementById("login").addEventListener("click", async (evt) => {
+document.getElementById("login").addEventListener("click", async () => {
     let loginResponse = await fetch("/api/login", {
         method: "POST",
         body: JSON.stringify(gatherLogin()),
@@ -14,7 +14,7 @@ document.getElementById("login").addEventListener("click", async (evt) => {
     textarea.value = JSON.stringify(loginResponse, null, 4)
 })
 
-document.getElementById("create").addEventListener("click", async (evt) => {
+document.getElementById("create").addEventListener("click", async () => {
     const loginResponse = await fetch("/api/user", {
         method: "POST",
         body: JSON.stringify(gatherLogin()),
@@ -53,6 +53,9 @@ document.getElementById("newtask").addEventListener("click", async () => {
         title: document.getElementById("inputtitle").value,
         description: document.getElementById("inputdesc").value,
         user_id: userRespone.userId,
+        recurring_month: false,
+        recurring_n: false,
+        recurring_stop: "",
     }
 
     console.log(body)

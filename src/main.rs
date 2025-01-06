@@ -142,11 +142,15 @@ fn handle_api_request(
 ) {
     match request_line.as_str() {
         "GET /api/task" => {
+            //TODO get tasks associeted with user
             let json_tasks: Vec<String> =
                 match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
                     Ok(vec_of_boxes) => vec_of_boxes
                         .into_iter()
-                        .map(|task| task.to_json())
+                        .map(|task| {
+                            println!("{task:?}");
+                            task.to_json()
+                        })
                         .collect(),
                     Err(err) => {
                         serve_500_json(stream, err.to_string());
@@ -173,6 +177,7 @@ fn handle_api_request(
             match sql_connection.execute(task.to_sql_insert().as_str(), ()) {
                 Ok(_) => {}
                 Err(err) => {
+                    println!("{err}");
                     serve_500_json(stream, err.to_string());
                     return;
                 }
@@ -421,7 +426,14 @@ fn query_to_object<T: Sql>(
         results.extend(query);
     }
 
-    let vec_of_boxes = results.into_iter().filter_map(|r| r.ok()).collect();
+    let vec_of_boxes = results
+        .into_iter()
+        .map(|x| {
+            x.as_ref().inspect_err(|e| println!("{e}"));
+            x
+        })
+        .filter_map(|r| r.ok())
+        .collect();
 
     Ok(vec_of_boxes)
 }
@@ -511,6 +523,8 @@ fn serve_411_json(mut stream: &TcpStream) {
     };
 }
 
+//TODO this does not make valid json
+//maybe make error message structs with serialization
 fn serve_500_json(mut stream: &TcpStream, message: String) {
     let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
