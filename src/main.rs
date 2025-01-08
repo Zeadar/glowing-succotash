@@ -1,7 +1,6 @@
 use chrono::{TimeDelta, Utc};
 use data_structs::{JsonError, SessionUser, Settings, Sql, Task, User};
 use mime_guess;
-use rand::random;
 use rusqlite::Connection;
 use sha256::digest;
 use std::{
@@ -150,7 +149,7 @@ fn handle_api_request(
 ) {
     match request_line.as_str() {
         "GET /api/task" => {
-            let user_id = match extract_user_id(header, session) {
+            let user_id = match extract_user_id(&header, session) {
                 Ok(user_id) => user_id,
                 Err(err) => {
                     serve_error_json(stream, HttpError::Forbidden, String::from(err));
@@ -174,6 +173,14 @@ fn handle_api_request(
             serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
         }
         "POST /api/task" => {
+            let user_id = match extract_user_id(&header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
             let body = extract_body(stream, buf_reader, header);
             if body.is_none() {
                 return;
@@ -188,7 +195,12 @@ fn handle_api_request(
             };
 
             let sql_connection = sql_connection.lock().unwrap();
-            match sql_connection.execute(task.to_sql_insert().as_str(), ()) {
+            match sql_connection.execute(
+                task.to_sql_insert()
+                    .replace("{}", user_id.as_str())
+                    .as_str(),
+                (),
+            ) {
                 Ok(_) => {}
                 Err(err) => {
                     serve_error_json(stream, HttpError::InternalServerError, err.to_string());
@@ -200,7 +212,7 @@ fn handle_api_request(
             serve_200_json(stream, task.to_json());
         }
         "GET /api/user" => {
-            let user_id = match extract_user_id(header, session) {
+            let user_id = match extract_user_id(&header, session) {
                 Ok(user_id) => user_id,
                 Err(err) => {
                     serve_error_json(stream, HttpError::Forbidden, String::from(err));
@@ -223,11 +235,9 @@ fn handle_api_request(
                     return;
                 }
             };
-            user.salt = Some(random());
             let mut passwd = user.password.as_bytes().to_owned();
-            passwd.extend(user.salt);
+            passwd.extend([user.salt]);
             user.password = digest(passwd);
-            user.id = Some(Uuid::now_v7().to_string());
 
             let sql_connection = sql_connection.lock().unwrap();
             match sql_connection.execute(user.to_sql_insert().as_str(), ()) {
@@ -280,9 +290,9 @@ fn handle_api_request(
                 }
             };
 
-            let mut hashed_passwd: Vec<u8> = passwd.as_bytes().into_iter().map(|b| *b).collect();
-            hashed_passwd.extend(user.salt);
-            let hashed_passwd = digest(hashed_passwd);
+            let mut user_passwd: Vec<u8> = passwd.as_bytes().into_iter().map(|b| *b).collect();
+            user_passwd.extend([user.salt]);
+            let hashed_passwd = digest(user_passwd);
             if user.password == hashed_passwd {
                 let session_uuid = Uuid::new_v4();
 
@@ -291,7 +301,7 @@ fn handle_api_request(
                     session.insert(
                         session_uuid.to_string(),
                         SessionUser {
-                            user_id: user.id.as_ref().unwrap().clone(),
+                            user_id: user.id.clone(),
                             expire: Utc::now() + TimeDelta::seconds(10),
                         },
                     );
@@ -300,7 +310,7 @@ fn handle_api_request(
                 let json = format!(
                     "{{\"username\": \"{}\",\"userId\":\"{}\",\"authority\":\"{}\"}}",
                     user.username,
-                    user.id.as_ref().unwrap(),
+                    user.id,
                     session_uuid.to_string(),
                 );
                 println!("{json}");
@@ -325,7 +335,7 @@ fn handle_api_request(
 }
 
 fn extract_user_id(
-    header: HashMap<String, &str>,
+    header: &HashMap<String, &str>,
     session: Arc<RwLock<HashMap<String, SessionUser>>>,
 ) -> Result<String, &'static str> {
     let authority = match header.get("authority") {
@@ -355,7 +365,7 @@ fn extract_user_id(
     Ok(session_user.user_id)
 }
 
-//TODO return result instaead of accepting stream
+//TODO return result instead of accepting stream
 fn extract_body(
     stream: &TcpStream,
     buf_reader: std::io::Take<BufReader<&TcpStream>>,

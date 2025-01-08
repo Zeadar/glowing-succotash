@@ -1,4 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc};
+use rand::random;
 use rusqlite;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -35,7 +36,8 @@ pub struct SessionUser {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Task {
-    id: Option<String>,
+    #[serde(skip_deserializing)]
+    id: String,
     assign_date: NaiveDate,
     due_date: NaiveDate,
     title: String,
@@ -43,24 +45,20 @@ pub struct Task {
     recurring_month: bool,
     recurring_n: bool,
     recurring_stop: String,
-    //TODO consider how user_id should be handled
-    //preferable not from client side
-    #[serde(skip_serializing, skip_deserializing)]
-    user_id: String,
 }
 
 impl Sql for Task {
     fn to_sql_insert(&self) -> String {
-        format!("INSERT INTO tasks (id, assign_date, due_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}');",
-            self.id.clone().unwrap_or(Uuid::now_v7().to_string()), 
-            self.assign_date, 
+        format!("INSERT INTO tasks (id, assign_date, due_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{{}}');",
+            self.id,
+            self.assign_date,
             self.due_date,
             self.title,
             self.description,
             if self.recurring_month {1} else {0},
             if self.recurring_n {1} else {0},
             self.recurring_stop,
-            self.user_id, )
+       )
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
@@ -73,7 +71,6 @@ impl Sql for Task {
             recurring_month: row.get("recurring_month")?,
             recurring_n: row.get("recurring_n")?,
             recurring_stop: row.get("recurring_stop")?,
-            user_id: row.get("user_id")?,
         };
         Ok(Box::new(t))
     }
@@ -83,44 +80,37 @@ impl Sql for Task {
     }
 
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
-        // let t: Task = serde_json::de::from_str(json)?;
-        // Ok(Box::new(t))
-
-        //Making a match here exposes the sillyness of this function
-        match serde_json::de::from_str(json) {
-            Ok(t) => Ok(Box::new(t)),
-            Err(err) => Err(err),
-        }
+        let mut t: Task = serde_json::de::from_str(json)?;
+        t.id = Uuid::now_v7().to_string();
+        Ok(Box::new(t))
     }
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct User {
-    pub id: Option<String>,
+    #[serde(skip_deserializing)]
+    pub id: String,
     pub username: String,
     #[serde(skip_serializing)]
     pub password: String,
-    #[serde(skip_serializing)]
-    pub salt: Option<u8>,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub salt: u8,
 }
 
 impl Sql for User {
     fn to_sql_insert(&self) -> String {
         format!(
             "INSERT INTO users (id, username, password, salt) VALUES ('{}', '{}', '{}', {})",
-            self.id.to_owned().unwrap_or(Uuid::now_v7().to_string()),
-            self.username,
-            self.password,
-            self.salt.unwrap()
+            self.id, self.username, self.password, self.salt
         )
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
         let u = User {
             id: row.get("id")?,
-            username: row.get(1)?,
-            password: row.get(2)?,
-            salt: row.get(3)?,
+            username: row.get("username")?,
+            password: row.get("password")?,
+            salt: row.get("salt")?,
         };
         Ok(Box::new(u))
     }
@@ -130,7 +120,9 @@ impl Sql for User {
     }
 
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
-        let u: User = serde_json::de::from_str(json)?;
-        Ok(Box::new(u))
+        let mut user: User = serde_json::de::from_str(json)?;
+        user.id = Uuid::now_v7().to_string();
+        user.salt = random();
+        Ok(Box::new(user))
     }
 }

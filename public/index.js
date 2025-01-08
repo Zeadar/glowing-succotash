@@ -41,30 +41,24 @@ document.getElementById("newtask").addEventListener("click", async () => {
     const authority = window.localStorage.getItem("authority")
     const headers = new Headers()
     headers.append("authority", authority)
-    const userResponse = await fetch("/api/user", {
-        headers,
-    }).then((r) => r.json())
-
-    console.log({ userRespone: userResponse })
 
     const body = {
         due_date: document.getElementById("inputdate").value,
         assign_date: new Date(Date.now()).toISOString().slice(0, 10),
         title: document.getElementById("inputtitle").value,
         description: document.getElementById("inputdesc").value,
-        user_id: userResponse.userId,
         recurring_month: true,
         recurring_n: false,
         recurring_stop: "",
     }
-
-    console.log(body)
 
     const r = await fetch("/api/task", {
         method: "POST",
         headers: headers,
         body: JSON.stringify(body),
     }).then((r) => r.json())
+
+    console.log(r)
 
     textarea.value = JSON.stringify(r, null, 4)
 })
