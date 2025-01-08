@@ -11,6 +11,13 @@ pub trait Sql {
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error>;
 }
 
+#[derive(Serialize)]
+pub struct JsonError {
+    pub message: &'static str,
+    pub code: usize,
+    pub internal: String,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Settings {
     pub root_path: String,
@@ -36,14 +43,24 @@ pub struct Task {
     recurring_month: bool,
     recurring_n: bool,
     recurring_stop: String,
-    #[serde(skip_serializing)]
+    //TODO consider how user_id should be handled
+    //preferable not from client side
+    #[serde(skip_serializing, skip_deserializing)]
     user_id: String,
 }
 
 impl Sql for Task {
     fn to_sql_insert(&self) -> String {
         format!("INSERT INTO tasks (id, assign_date, due_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}');",
-            self.id.clone().unwrap_or(Uuid::now_v7().to_string()), self.assign_date, self.due_date, self.title, self.description, self.recurring_month, self.recurring_n, self.recurring_stop, self.user_id, )
+            self.id.clone().unwrap_or(Uuid::now_v7().to_string()), 
+            self.assign_date, 
+            self.due_date,
+            self.title,
+            self.description,
+            if self.recurring_month {1} else {0},
+            if self.recurring_n {1} else {0},
+            self.recurring_stop,
+            self.user_id, )
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {

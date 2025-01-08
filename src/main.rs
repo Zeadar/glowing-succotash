@@ -1,5 +1,5 @@
 use chrono::{TimeDelta, Utc};
-use data_structs::{SessionUser, Settings, Sql, Task, User};
+use data_structs::{JsonError, SessionUser, Settings, Sql, Task, User};
 use mime_guess;
 use rand::random;
 use rusqlite::Connection;
@@ -18,6 +18,14 @@ mod data_structs;
 mod threadspool;
 
 const SETTINGS_PATH: &str = "settings.json";
+
+enum HttpError {
+    BadRequest = 400,
+    Forbidden = 403,
+    NotFound = 404,
+    LengthRequired = 411,
+    InternalServerError = 500,
+}
 
 fn main() {
     let settings = match fs::read_to_string(SETTINGS_PATH) {
@@ -142,21 +150,27 @@ fn handle_api_request(
 ) {
     match request_line.as_str() {
         "GET /api/task" => {
-            //TODO get tasks associeted with user
-            let json_tasks: Vec<String> =
-                match query_to_object::<Task>(sql_connection, "SELECT * FROM tasks") {
-                    Ok(vec_of_boxes) => vec_of_boxes
-                        .into_iter()
-                        .map(|task| {
-                            println!("{task:?}");
-                            task.to_json()
-                        })
-                        .collect(),
-                    Err(err) => {
-                        serve_500_json(stream, err.to_string());
-                        return;
-                    }
-                };
+            let user_id = match extract_user_id(header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
+            let json_tasks: Vec<String> = match query_to_object::<Task>(
+                sql_connection,
+                format!("SELECT * FROM tasks WHERE user_id = '{user_id}'").as_str(),
+            ) {
+                Ok(vec_of_boxes) => vec_of_boxes
+                    .into_iter()
+                    .map(|task| task.to_json())
+                    .collect(),
+                Err(err) => {
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                    return;
+                }
+            };
             serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
         }
         "POST /api/task" => {
@@ -168,7 +182,7 @@ fn handle_api_request(
             let task = match Task::from_json(body.unwrap().as_str()) {
                 Ok(task) => task,
                 Err(err) => {
-                    serve_400_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
                     return;
                 }
             };
@@ -177,8 +191,7 @@ fn handle_api_request(
             match sql_connection.execute(task.to_sql_insert().as_str(), ()) {
                 Ok(_) => {}
                 Err(err) => {
-                    println!("{err}");
-                    serve_500_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
                     return;
                 }
             }
@@ -187,9 +200,12 @@ fn handle_api_request(
             serve_200_json(stream, task.to_json());
         }
         "GET /api/user" => {
-            let user_id = match extract_user_id(stream, header, session) {
-                Some(user_id) => user_id,
-                None => return,
+            let user_id = match extract_user_id(header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
             };
 
             serve_200_json(stream, format!("{{\"userId\":\"{}\"}}", user_id));
@@ -203,7 +219,7 @@ fn handle_api_request(
             let mut user = match User::from_json(body.as_str()) {
                 Ok(user) => user,
                 Err(err) => {
-                    serve_400_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
                     return;
                 }
             };
@@ -217,7 +233,7 @@ fn handle_api_request(
             match sql_connection.execute(user.to_sql_insert().as_str(), ()) {
                 Ok(_) => {}
                 Err(err) => {
-                    serve_400_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
                     return;
                 }
             }
@@ -234,7 +250,7 @@ fn handle_api_request(
             let user: User = match serde_json::de::from_str(body.as_str()) {
                 Ok(login) => login,
                 Err(err) => {
-                    serve_400_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
                     return;
                 }
             };
@@ -247,7 +263,7 @@ fn handle_api_request(
             ) {
                 Ok(user) => user,
                 Err(err) => {
-                    serve_400_json(stream, err.to_string());
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
                     return;
                 }
             };
@@ -255,7 +271,11 @@ fn handle_api_request(
             let user = match user.first() {
                 Some(user) => user,
                 None => {
-                    serve_400_json(stream, String::from("User not found or invalid password"));
+                    serve_error_json(
+                        stream,
+                        HttpError::BadRequest,
+                        String::from("User not found or invalid password"),
+                    );
                     return;
                 }
             };
@@ -286,26 +306,32 @@ fn handle_api_request(
                 println!("{json}");
                 serve_200_json(stream, json);
             } else {
-                serve_400_json(stream, String::from("User not found or invalid password"));
+                serve_error_json(
+                    stream,
+                    HttpError::BadRequest,
+                    String::from("User not found or invalid password"),
+                );
                 return;
             }
         }
         _ => {
-            serve_404_json(stream, format!("No match for {request_line}"));
+            serve_error_json(
+                stream,
+                HttpError::NotFound,
+                format!("What the hell is {request_line} supposed to mean?"),
+            );
         }
     }
 }
 
 fn extract_user_id(
-    stream: &TcpStream,
     header: HashMap<String, &str>,
     session: Arc<RwLock<HashMap<String, SessionUser>>>,
-) -> Option<String> {
+) -> Result<String, &'static str> {
     let authority = match header.get("authority") {
         Some(auth) => *auth,
         None => {
-            serve_403_json(stream, String::from("No auth in header"));
-            return None;
+            return Err("No Authority in header");
         }
     };
 
@@ -315,11 +341,7 @@ fn extract_user_id(
         session_user = match session.get(authority) {
             Some(yay) => yay.clone(),
             None => {
-                serve_403_json(
-                    stream,
-                    String::from("No user ascocieted with auth in header"),
-                );
-                return None;
+                return Err("No user associated with Authority");
             }
         };
     }
@@ -327,13 +349,13 @@ fn extract_user_id(
     if session_user.expire < Utc::now() {
         let mut session = session.write().unwrap();
         session.remove(authority);
-        serve_403_json(stream, String::from("Auth expired"));
-        return None;
+        return Err("Authority expired");
     }
 
-    return Some(session_user.user_id);
+    Ok(session_user.user_id)
 }
 
+//TODO return result instaead of accepting stream
 fn extract_body(
     stream: &TcpStream,
     buf_reader: std::io::Take<BufReader<&TcpStream>>,
@@ -354,12 +376,12 @@ fn extract_body(
         {
             Ok(_) => Some(body),
             Err(err) => {
-                serve_400_json(stream, format!("{err}"));
+                serve_error_json(stream, HttpError::BadRequest, err.to_string());
                 return None;
             }
         }
     } else {
-        serve_411_json(stream);
+        serve_error_json(stream, HttpError::LengthRequired, String::new());
         return None;
     }
 }
@@ -429,7 +451,7 @@ fn query_to_object<T: Sql>(
     let vec_of_boxes = results
         .into_iter()
         .map(|x| {
-            x.as_ref().inspect_err(|e| println!("{e}"));
+            x.as_ref().inspect_err(|e| println!("{e}")).unwrap();
             x
         })
         .filter_map(|r| r.ok())
@@ -460,97 +482,52 @@ fn serve_200_json(mut stream: &TcpStream, body: String) {
     }
 }
 
-fn serve_404_json(mut stream: &TcpStream, message: String) {
-    let message = format!("{{\"error\":{{\"code\":404,\"message\":\"404 Resource not found\",\"internalMessage\":\"{message}\"}}}}");
-    let response = format!(
-        "HTTP/1.1 404 Resource Not Found\r\nContent-Length: {}\r\n\r\n{}",
-        message.as_bytes().len(),
-        message
-    );
-    match stream.write_all(response.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 404 message to stream");
-            println!("{err}");
-        }
-        _ => {}
+fn serve_error_json(mut stream: &TcpStream, error: HttpError, internal: String) {
+    let body = match error {
+        HttpError::BadRequest => JsonError {
+            message: "400 Bad Request",
+            code: 400,
+            internal,
+        },
+        HttpError::Forbidden => JsonError {
+            message: "403 Forbidden",
+            code: 403,
+            internal,
+        },
+        HttpError::NotFound => JsonError {
+            message: "404 Not Found",
+            code: 404,
+            internal,
+        },
+        HttpError::LengthRequired => JsonError {
+            message: "411 Length Required",
+            code: 411,
+            internal,
+        },
+        HttpError::InternalServerError => JsonError {
+            message: "500 Internal Server Error",
+            code: 500,
+            internal,
+        },
     };
-}
 
-fn serve_403_json(mut stream: &TcpStream, message: String) {
-    let message = format!("{{\"error\":{{\"code\":403,\"message\":\"403 Forbidden\",\"internalMessage\":\"{message}\"}}}}");
-    let response = format!(
-        "HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\n\r\n{}",
-        message.as_bytes().len(),
-        message
-    );
-    match stream.write_all(response.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 404 message to stream");
-            println!("{err}");
-        }
-        _ => {}
-    };
-}
+    let message = format!("{{\"error\":{}}}", serde_json::to_string(&body).unwrap());
 
-fn serve_400_json(mut stream: &TcpStream, message: String) {
-    let message = format!("{{\"error\":{{\"code\":400,\"message\":\"400 Bad Request\",\"internalMessage\":\"{message}\"}}}}");
     let response = format!(
-        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 {}\r\nContent-Length: {}\r\n\r\n{}",
+        body.message,
         message.as_bytes().len(),
         message
     );
-    match stream.write_all(response.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 400 message to stream");
-            println!("{err}");
-        }
-        _ => {}
-    };
-}
-fn serve_411_json(mut stream: &TcpStream) {
-    let message = format!("{{\"error\":{{\"code\":411,\"message\":\"Length Required\"}}}}");
-    let response = format!(
-        "HTTP/1.1 411 Length Required\r\nContent-Length: {}\r\n\r\n{}",
-        message.as_bytes().len(),
-        message
-    );
-    match stream.write_all(response.as_bytes()) {
-        Err(err) => {
-            println!("Could not write 411 message to stream");
-            println!("{err}");
-        }
-        _ => {}
-    };
-}
 
-//TODO this does not make valid json
-//maybe make error message structs with serialization
-fn serve_500_json(mut stream: &TcpStream, message: String) {
-    let message = format!("{{\"error\":{{\"code\":500,\"message\":\"500 Internal Server Error\",\"internalMessage\":\"{message}\"}}}}");
-    let response = format!(
-        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{}",
-        message.as_bytes().len(),
-        message
-    );
     match stream.write_all(response.as_bytes()) {
         Err(err) => {
-            println!("Could not write 500 message to stream");
+            println!("Could not write {} message to stream", body.code);
             println!("{err}");
         }
         _ => {}
     };
 }
-
-// fn serve_204_nocontent(mut stream: &TcpStream) {
-//     let header = "HTTP/1.1 204 No Content\r\n";
-//     match stream.write_all(header.as_bytes()) {
-//         Err(err) => {
-//             println!("Could not write 204 message to stream");
-//             println!("{err}");
-//         }
-//         _ => {}
-//     }
-// }
 
 fn serve_404_html(mut stream: TcpStream, message: String) {
     let first = r#"
