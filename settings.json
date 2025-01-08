@@ -1,5 +1,5 @@
 {
-    "root_path": "public",
+    "root_path": "public/suffering-silverfish/build",
     "bind_addr": "127.0.0.1",
     "bind_port": "7878",
     "n_threads": 32,

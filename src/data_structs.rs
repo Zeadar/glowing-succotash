@@ -38,25 +38,27 @@ pub struct SessionUser {
 pub struct Task {
     #[serde(skip_deserializing)]
     id: String,
+    #[serde(rename = "assignDate")]
     assign_date: NaiveDate,
-    due_date: NaiveDate,
     title: String,
     description: String,
+    #[serde(rename = "recurringMonth")]
     recurring_month: bool,
-    recurring_n: bool,
-    recurring_stop: String,
+    #[serde(rename = "recurringN")]
+    recurring_n: u32,
+    #[serde(rename = "recurringStop")]
+    recurring_stop: NaiveDate,
 }
 
 impl Sql for Task {
     fn to_sql_insert(&self) -> String {
-        format!("INSERT INTO tasks (id, assign_date, due_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{{}}');",
+        format!("INSERT INTO tasks (id, assign_date, title, description, recurring_month, recurring_n, recurring_stop, user_id) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{{}}');",
             self.id,
             self.assign_date,
-            self.due_date,
             self.title,
             self.description,
             if self.recurring_month {1} else {0},
-            if self.recurring_n {1} else {0},
+            self.recurring_n,
             self.recurring_stop,
        )
     }
@@ -65,7 +67,6 @@ impl Sql for Task {
         let t = Task {
             id: row.get("id")?,
             assign_date: row.get("assign_date")?,
-            due_date: row.get("due_date")?,
             title: row.get("title")?,
             description: row.get("description")?,
             recurring_month: row.get("recurring_month")?,
@@ -80,6 +81,7 @@ impl Sql for Task {
     }
 
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
+        println!("parsing json {json}");
         let mut t: Task = serde_json::de::from_str(json)?;
         t.id = Uuid::now_v7().to_string();
         Ok(Box::new(t))

@@ -302,7 +302,7 @@ fn handle_api_request(
                         session_uuid.to_string(),
                         SessionUser {
                             user_id: user.id.clone(),
-                            expire: Utc::now() + TimeDelta::seconds(10),
+                            expire: Utc::now() + TimeDelta::seconds(60 * 60),
                         },
                     );
                 }
@@ -458,14 +458,7 @@ fn query_to_object<T: Sql>(
         results.extend(query);
     }
 
-    let vec_of_boxes = results
-        .into_iter()
-        .map(|x| {
-            x.as_ref().inspect_err(|e| println!("{e}")).unwrap();
-            x
-        })
-        .filter_map(|r| r.ok())
-        .collect();
+    let vec_of_boxes = results.into_iter().filter_map(|r| r.ok()).collect();
 
     Ok(vec_of_boxes)
 }
