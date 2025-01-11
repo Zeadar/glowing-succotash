@@ -8,6 +8,7 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
+    str::FromStr,
     sync::{Arc, Mutex, RwLock},
 };
 use threadspool::ThreadSpool;
@@ -123,7 +124,16 @@ fn main() {
                 })
                 .collect();
 
-            if request_line.contains("/api/") {
+            let request_path: Vec<&str> = request_line.split(" ").collect();
+            let request_path = match request_path.last() {
+                Some(p) => *p,
+                None => {
+                    serve_404_html(stream, String::from("Your header sucks"));
+                    return;
+                }
+            };
+
+            if request_path.starts_with("/api/") {
                 handle_api_request(
                     &stream,
                     buf_reader,
