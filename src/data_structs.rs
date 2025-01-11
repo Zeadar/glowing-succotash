@@ -34,6 +34,11 @@ pub struct SessionUser {
     pub expire: DateTime<Utc>,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct IdCarrier {
+    pub id: String,
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Task {
     #[serde(skip_deserializing)]
@@ -81,7 +86,6 @@ impl Sql for Task {
     }
 
     fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
-        println!("parsing json {json}");
         let mut t: Task = serde_json::de::from_str(json)?;
         t.id = Uuid::now_v7().to_string();
         Ok(Box::new(t))

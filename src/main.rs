@@ -1,5 +1,5 @@
 use chrono::{TimeDelta, Utc};
-use data_structs::{JsonError, SessionUser, Settings, Sql, Task, User};
+use data_structs::{IdCarrier, JsonError, SessionUser, Settings, Sql, Task, User};
 use mime_guess;
 use rusqlite::Connection;
 use sha256::digest;
@@ -8,7 +8,6 @@ use std::{
     fs,
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
-    str::FromStr,
     sync::{Arc, Mutex, RwLock},
 };
 use threadspool::ThreadSpool;
@@ -220,6 +219,48 @@ fn handle_api_request(
             drop(sql_connection);
 
             serve_200_json(stream, task.to_json());
+        }
+        "DELETE /api/task" => {
+            let user_id = match extract_user_id(&header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
+            let body: String;
+            match extract_body(stream, buf_reader, header) {
+                Some(b) => body = b,
+                None => return,
+            };
+
+            let id_carrier: IdCarrier;
+            match serde_json::de::from_str::<IdCarrier>(body.as_str()) {
+                Ok(ic) => id_carrier = ic,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
+                    return;
+                }
+            }
+
+            let task_id = &id_carrier.id;
+
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(
+                format!("DELETE FROM tasks WHERE id = '{task_id}' AND user_id = '{user_id}';")
+                    .as_str(),
+                (),
+            ) {
+                Ok(_) => (),
+                Err(err) => {
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                    return;
+                }
+            };
+            drop(sql_connection);
+
+            serve_200_json(stream, serde_json::to_string(&id_carrier).unwrap());
         }
         "GET /api/user" => {
             let user_id = match extract_user_id(&header, session) {
