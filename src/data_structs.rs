@@ -69,7 +69,7 @@ impl Sql for Task {
     }
 
     fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
-        let t = Task {
+        let t = Self {
             id: row.get("id")?,
             assign_date: row.get("assign_date")?,
             title: row.get("title")?,
@@ -89,6 +89,43 @@ impl Sql for Task {
         let mut t: Task = serde_json::de::from_str(json)?;
         t.id = Uuid::now_v7().to_string();
         Ok(Box::new(t))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CompleteTask {
+    #[serde(skip_deserializing)]
+    id: String,
+    completed: NaiveDate,
+    #[serde(skip_serializing)]
+    task_id: String,
+}
+
+impl Sql for CompleteTask {
+    fn to_sql_insert(&self) -> String {
+        format!(
+            "INSERT INTO complete_tasks (id, completed, task_id) VALUES ('{}', '{}', '{}');",
+            self.id, self.completed, self.task_id,
+        )
+    }
+
+    fn from_sql_row(row: &rusqlite::Row) -> Result<Box<Self>, rusqlite::Error> {
+        let ct = Self {
+            id: row.get("id")?,
+            completed: row.get("completed")?,
+            task_id: row.get("task_id")?,
+        };
+        Ok(Box::new(ct))
+    }
+
+    fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+
+    fn from_json(json: &str) -> Result<Box<Self>, serde_json::Error> {
+        let mut ct = serde_json::from_str::<CompleteTask>(json)?;
+        ct.id = Uuid::now_v7().to_string();
+        Ok(Box::new(ct))
     }
 }
 
