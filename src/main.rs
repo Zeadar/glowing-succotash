@@ -1,5 +1,5 @@
 use chrono::{TimeDelta, Utc};
-use data_structs::{IdCarrier, JsonError, SessionUser, Settings, Sql, Task, User};
+use data_structs::{CompleteTask, IdCarrier, JsonError, SessionUser, Settings, Sql, Task, User};
 use mime_guess;
 use rusqlite::Connection;
 use sha256::digest;
@@ -212,6 +212,7 @@ fn handle_api_request(
             ) {
                 Ok(_) => {}
                 Err(err) => {
+                    drop(sql_connection);
                     serve_error_json(stream, HttpError::InternalServerError, err.to_string());
                     return;
                 }
@@ -261,6 +262,116 @@ fn handle_api_request(
             drop(sql_connection);
 
             serve_200_json(stream, serde_json::to_string(&id_carrier).unwrap());
+        }
+        "GET /api/complete_task" => {
+            let _user_id = match extract_user_id(&header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
+            let body: String;
+            match extract_body(stream, buf_reader, header) {
+                Some(b) => body = b,
+                None => return,
+            }
+
+            let id_carrier: IdCarrier;
+            match serde_json::from_str::<IdCarrier>(body.as_str()) {
+                Ok(ic) => id_carrier = ic,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
+                    return;
+                }
+            }
+
+            let task_id = &id_carrier.id;
+
+            let complete_tasks = match query_to_object::<CompleteTask>(
+                sql_connection,
+                format!("SELECT * FROM complete_tasks WHERE task_id = '{task_id}';").as_str(),
+            ) {
+                Ok(ct) => ct
+                    .into_iter()
+                    .map(|ct| ct.to_json())
+                    .collect::<Vec<String>>(),
+                Err(err) => {
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                    return;
+                }
+            };
+
+            serve_200_json(stream, format!("[{}]", complete_tasks.join(",")));
+        }
+        "POST /api/complete_task" => {
+            let body = match extract_body(stream, buf_reader, header) {
+                Some(b) => b,
+                None => return,
+            };
+
+            let complete_task = match serde_json::de::from_str::<CompleteTask>(body.as_str()) {
+                Ok(ct) => ct,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
+                    return;
+                }
+            };
+
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(complete_task.to_sql_insert().as_str(), ()) {
+                Ok(_) => (),
+                Err(err) => {
+                    drop(sql_connection);
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                    return;
+                }
+            }
+            drop(sql_connection);
+
+            serve_200_json(stream, complete_task.to_json());
+        }
+        "DELETE /api/complete_task" => {
+            let _user_id = match extract_user_id(&header, session) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
+            let body: String;
+            match extract_body(stream, buf_reader, header) {
+                Some(b) => body = b,
+                None => return,
+            }
+
+            let id_carrier: IdCarrier;
+            match serde_json::from_str::<IdCarrier>(body.as_str()) {
+                Ok(ic) => id_carrier = ic,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
+                    return;
+                }
+            }
+
+            let complete_task_id = &id_carrier.id;
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(
+                format!("DELETE FROM complete_tasks WHERE id = '{complete_task_id}';").as_ref(),
+                (),
+            ) {
+                Ok(_) => (),
+                Err(err) => {
+                    drop(sql_connection);
+                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
+                    return;
+                }
+            };
+            drop(sql_connection);
+
+            serve_200_json(stream, serde_json::ser::to_string(&id_carrier).unwrap());
         }
         "GET /api/user" => {
             let user_id = match extract_user_id(&header, session) {
@@ -365,6 +476,7 @@ fn handle_api_request(
                     session_uuid.to_string(),
                 );
                 println!("{json}");
+
                 serve_200_json(stream, json);
             } else {
                 serve_error_json(
@@ -529,7 +641,7 @@ fn serve_200_json(mut stream: &TcpStream, body: String) {
     }
     match stream.write_all(body) {
         Err(err) => {
-            println!("Could not write header to stream");
+            println!("Could not write body to stream");
             println!("{err}");
         }
         _ => {}
