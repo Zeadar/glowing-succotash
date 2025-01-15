@@ -413,6 +413,37 @@ fn handle_api_request(
 
             serve_200_json(stream, user.to_json());
         }
+        "DELETE /api/user" => {
+            let user_id = match extract_user_id(&header, session.clone()) {
+                Ok(user_id) => user_id,
+                Err(err) => {
+                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
+                    return;
+                }
+            };
+
+            let sql_connection = sql_connection.lock().unwrap();
+            match sql_connection.execute(
+                format!("DELETE FROM users WHERE id = '{user_id}';").as_str(),
+                (),
+            ) {
+                Ok(_) => (),
+                Err(err) => {
+                    drop(sql_connection);
+                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                    return;
+                }
+            }
+            drop(sql_connection);
+
+            let mut session = session.write().unwrap();
+            session.remove(user_id.as_str());
+            drop(session);
+
+            let body = r#"{"user_id":"{}"}"#;
+            let body = body.replace("{}", user_id.as_str());
+            serve_200_json(stream, body);
+        }
         "POST /api/login" => {
             let body = match extract_body(stream, buf_reader, header) {
                 Some(body) => body,
