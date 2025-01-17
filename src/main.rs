@@ -280,11 +280,10 @@ fn handle_api_request(
                 }
             };
 
-            let body: String;
-            match extract_body(stream, buf_reader, header) {
-                Some(b) => body = b,
+            let body: String = match extract_body(stream, buf_reader, header) {
+                Some(b) => b,
                 None => return,
-            }
+            };
 
             let id_carrier: IdCarrier;
             match serde_json::from_str::<IdCarrier>(body.as_str()) {
@@ -319,7 +318,7 @@ fn handle_api_request(
                 None => return,
             };
 
-            let complete_task = match serde_json::de::from_str::<CompleteTask>(body.as_str()) {
+            let complete_task = match CompleteTask::from_json(&body) {
                 Ok(ct) => ct,
                 Err(err) => {
                     serve_error_json(stream, HttpError::BadRequest, err.to_string());
