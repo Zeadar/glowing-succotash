@@ -41,6 +41,14 @@ fn main() {
             panic!("{err}");
         }
     };
+
+    if !fs::exists(&settings.data_path).unwrap() {
+        fs::File::create(&settings.data_path).unwrap();
+        let sql_init = String::from_utf8(fs::read("init.sql").unwrap()).unwrap();
+        let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
+        sql_connection.execute_batch(&sql_init).unwrap();
+    }
+
     let settings = Arc::new(settings);
 
     let sql_connection = Connection::open(settings.data_path.as_str()).unwrap();
