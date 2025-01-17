@@ -42,7 +42,7 @@ pub struct IdCarrier {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Task {
     #[serde(skip_deserializing)]
-    id: String,
+    pub id: String,
     #[serde(rename = "assignDate")]
     assign_date: NaiveDate,
     title: String,
@@ -53,6 +53,8 @@ pub struct Task {
     recurring_n: u32,
     #[serde(rename = "recurringStop")]
     recurring_stop: NaiveDate,
+    #[serde(rename = "completeTasks", skip_deserializing)]
+    pub complete_tasks: Vec<Box<CompleteTask>>,
 }
 
 impl Sql for Task {
@@ -77,6 +79,7 @@ impl Sql for Task {
             recurring_month: row.get("recurring_month")?,
             recurring_n: row.get("recurring_n")?,
             recurring_stop: row.get("recurring_stop")?,
+            complete_tasks: Vec::<Box<CompleteTask>>::new(),
         };
         Ok(Box::new(t))
     }

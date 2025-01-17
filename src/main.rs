@@ -174,20 +174,35 @@ fn handle_api_request(
                 }
             };
 
-            let json_tasks: Vec<String> = match query_to_object::<Task>(
-                sql_connection,
+            let mut tasks: Vec<Box<Task>> = match query_to_object::<Task>(
+                sql_connection.clone(),
                 format!("SELECT * FROM tasks WHERE user_id = '{user_id}'").as_str(),
             ) {
-                Ok(vec_of_boxes) => vec_of_boxes
-                    .into_iter()
-                    .map(|task| task.to_json())
-                    .collect(),
+                Ok(vec_of_boxes) => vec_of_boxes,
                 Err(err) => {
                     serve_error_json(stream, HttpError::InternalServerError, err.to_string());
                     return;
                 }
             };
-            serve_200_json(stream, format!("[{}]", json_tasks.join(",")));
+
+            for t in &mut tasks {
+                let complete_tasks: Vec<Box<CompleteTask>> = match query_to_object::<CompleteTask>(
+                    sql_connection.clone(),
+                    format!("SELECT * FROM complete_tasks WHERE task_id = '{}';", t.id).as_str(),
+                ) {
+                    Ok(ct) => ct,
+                    Err(err) => {
+                        serve_error_json(stream, HttpError::InternalServerError, err.to_string());
+                        return;
+                    }
+                };
+
+                t.complete_tasks = complete_tasks;
+            }
+
+            let tasks: Vec<String> = tasks.into_iter().map(|t| t.to_json()).collect();
+
+            serve_200_json(stream, format!("[{}]", tasks.join(",")));
         }
         "POST /api/task" => {
             let user_id = match extract_user_id(&header, session) {
@@ -270,47 +285,6 @@ fn handle_api_request(
             drop(sql_connection);
 
             serve_200_json(stream, serde_json::to_string(&id_carrier).unwrap());
-        }
-        "GET /api/complete_task" => {
-            let _user_id = match extract_user_id(&header, session) {
-                Ok(user_id) => user_id,
-                Err(err) => {
-                    serve_error_json(stream, HttpError::Forbidden, String::from(err));
-                    return;
-                }
-            };
-
-            let body: String = match extract_body(stream, buf_reader, header) {
-                Some(b) => b,
-                None => return,
-            };
-
-            let id_carrier: IdCarrier;
-            match serde_json::from_str::<IdCarrier>(body.as_str()) {
-                Ok(ic) => id_carrier = ic,
-                Err(err) => {
-                    serve_error_json(stream, HttpError::BadRequest, err.to_string());
-                    return;
-                }
-            }
-
-            let task_id = &id_carrier.id;
-
-            let complete_tasks = match query_to_object::<CompleteTask>(
-                sql_connection,
-                format!("SELECT * FROM complete_tasks WHERE task_id = '{task_id}';").as_str(),
-            ) {
-                Ok(ct) => ct
-                    .into_iter()
-                    .map(|ct| ct.to_json())
-                    .collect::<Vec<String>>(),
-                Err(err) => {
-                    serve_error_json(stream, HttpError::InternalServerError, err.to_string());
-                    return;
-                }
-            };
-
-            serve_200_json(stream, format!("[{}]", complete_tasks.join(",")));
         }
         "POST /api/complete_task" => {
             let body = match extract_body(stream, buf_reader, header) {
